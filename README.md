@@ -63,7 +63,7 @@ sudo dnf install python3.10 nodejs npm
 
 If you have Git installed:
 ```bash
-git clone https://github.com/YOUR_USERNAME/budget.git
+git clone https://github.com/matt6390/budget.git
 cd budget
 ```
 
