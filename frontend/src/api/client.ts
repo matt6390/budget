@@ -17,7 +17,9 @@ const clearTokens = () => {
 
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY)
-  if (token) {
+  const url = config.url ?? ''
+  const isAuthEndpoint = url.startsWith('/auth/')
+  if (token && !isAuthEndpoint) {
     config.headers.set('Authorization', `Bearer ${token}`)
   }
   return config

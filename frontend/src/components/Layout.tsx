@@ -10,6 +10,8 @@ const navItems = [
   { to: '/income', label: 'Income' },
   { to: '/expenses', label: 'Expenses' },
   { to: '/purchases', label: 'Purchases' },
+  { to: '/import-pdf', label: '📄 Import PDF' },
+  { to: '/import-history', label: '📋 Import History' },
   { to: '/categories', label: 'Categories' },
   { to: '/savings', label: '💰 Savings Goals' },
   { to: '/loans', label: '🏠 Loans' },

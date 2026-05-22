@@ -12,6 +12,7 @@ def api_root(request):
         {
             'auth': request.build_absolute_uri('/api/auth/'),
             'budget': request.build_absolute_uri('/api/budget/'),
+            'purchases': request.build_absolute_uri('/api/purchases/'),
         }
     )
 
@@ -21,4 +22,5 @@ urlpatterns = [
     path('api/', api_root, name='api-root'),
     path('api/auth/', include('apps.users.urls')),
     path('api/budget/', include('apps.budgets.urls')),
+    path('api/purchases/', include('apps.pdf_import.urls')),
 ]

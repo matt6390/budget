@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent } from 'react'
 
 import client from '../api/client'
 import Modal from '../components/Modal'
-import type { Category } from '../types'
+import type { BudgetSummary, Category } from '../types'
 import {
   COLORS,
   actionsRowStyle,
@@ -15,6 +15,8 @@ import {
   errorTextStyle,
   extractFieldErrors,
   formActionsStyle,
+  formatCurrency,
+  getCurrentMonth,
   inputStyle,
   labelStyle,
   mutedTextStyle,
@@ -27,15 +29,18 @@ type FieldErrors = Record<string, string>
 type CategoryFormState = {
   name: string
   color: string
+  monthly_budget: string
 }
 
 const defaultFormState: CategoryFormState = {
   name: '',
   color: '#6366f1',
+  monthly_budget: '',
 }
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([])
+  const [spendingMap, setSpendingMap] = useState<Record<number, number>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -45,13 +50,25 @@ export default function CategoriesPage() {
   const [generalError, setGeneralError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const fetchCategories = async () => {
+  const currentMonth = getCurrentMonth()
+
+  const fetchData = async () => {
     setIsLoading(true)
     setError('')
-
     try {
-      const response = await client.get<Category[]>('/budget/categories/')
-      setCategories(response.data)
+      const [catRes, summaryRes] = await Promise.all([
+        client.get<Category[]>('/budget/categories/'),
+        client.get<BudgetSummary>(`/budget/summary/?month=${currentMonth}`),
+      ])
+      setCategories(catRes.data)
+      // Build a map of category_id → total spent this month
+      const map: Record<number, number> = {}
+      for (const entry of summaryRes.data.spending_by_category) {
+        if (entry.category_id !== null) {
+          map[entry.category_id] = parseFloat(entry.total)
+        }
+      }
+      setSpendingMap(map)
     } catch {
       setError('Unable to load categories right now.')
     } finally {
@@ -60,7 +77,7 @@ export default function CategoriesPage() {
   }
 
   useEffect(() => {
-    void fetchCategories()
+    void fetchData()
   }, [])
 
   const closeModal = () => {
@@ -82,7 +99,7 @@ export default function CategoriesPage() {
 
   const openEditModal = (category: Category) => {
     setEditingCategory(category)
-    setFormState({ name: category.name, color: category.color })
+    setFormState({ name: category.name, color: category.color, monthly_budget: category.monthly_budget ?? '' })
     setFieldErrors({})
     setGeneralError('')
     setIsModalOpen(true)
@@ -95,13 +112,18 @@ export default function CategoriesPage() {
     setGeneralError('')
 
     try {
+      const payload = {
+        name: formState.name,
+        color: formState.color,
+        monthly_budget: formState.monthly_budget !== '' ? formState.monthly_budget : null,
+      }
       if (editingCategory) {
-        await client.patch(`/budget/categories/${editingCategory.id}/`, formState)
+        await client.patch(`/budget/categories/${editingCategory.id}/`, payload)
       } else {
-        await client.post('/budget/categories/', formState)
+        await client.post('/budget/categories/', payload)
       }
 
-      await fetchCategories()
+      await fetchData()
       closeModal()
     } catch (err) {
       const { fieldErrors: nextErrors, generalError: nextError } = extractFieldErrors(err)
@@ -119,7 +141,7 @@ export default function CategoriesPage() {
 
     try {
       await client.delete(`/budget/categories/${category.id}/`)
-      await fetchCategories()
+      await fetchData()
     } catch {
       setError('Unable to delete that category right now.')
     }
@@ -148,27 +170,49 @@ export default function CategoriesPage() {
         </section>
       ) : (
         <section style={gridStyle}>
-          {categories.map((category) => (
-            <article key={category.id} style={cardStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                  <span style={{ ...dotStyle, background: category.color }} />
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h2>
-                    <p style={{ color: COLORS.muted, margin: '0.35rem 0 0' }}>{category.color}</p>
+          {categories.map((category) => {
+            const budget = category.monthly_budget ? parseFloat(category.monthly_budget) : null
+            const spent = spendingMap[category.id] ?? 0
+            const pct = budget && budget > 0 ? Math.min((spent / budget) * 100, 100) : 0
+            const overBudget = budget !== null && spent > budget
+            const nearBudget = budget !== null && !overBudget && pct >= 75
+            const barColor = overBudget ? 'var(--error)' : nearBudget ? '#f59e0b' : 'var(--primary)'
+            return (
+              <article key={category.id} style={cardStyle}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <span style={{ ...dotStyle, background: category.color }} />
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h2>
+                      {budget ? (
+                        <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
+                          Budget: {formatCurrency(budget)}
+                          {overBudget && <span style={{ color: 'var(--error)', marginLeft: '0.4rem', fontWeight: 600 }}>⚠️ Over budget</span>}
+                        </p>
+                      ) : (
+                        <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>No budget set</p>
+                      )}
+                    </div>
+                  </div>
+                  <div style={actionsRowStyle}>
+                    <button onClick={() => openEditModal(category)} style={btnGhostStyle} type="button">✏️</button>
+                    <button onClick={() => handleDelete(category)} style={btnDangerStyle} type="button">🗑️</button>
                   </div>
                 </div>
-                <div style={actionsRowStyle}>
-                  <button onClick={() => openEditModal(category)} style={btnGhostStyle} type="button">
-                    ✏️
-                  </button>
-                  <button onClick={() => handleDelete(category)} style={btnDangerStyle} type="button">
-                    🗑️
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
+                {budget ? (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
+                      <span>{formatCurrency(spent)} spent</span>
+                      <span>{Math.round(pct)}% of {formatCurrency(budget)}</span>
+                    </div>
+                    <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '999px', transition: 'width 0.3s' }} />
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            )
+          })}
         </section>
       )}
 
@@ -204,6 +248,20 @@ export default function CategoriesPage() {
                 />
               </div>
               {fieldErrors.color ? <span style={fieldErrorStyle}>{fieldErrors.color}</span> : null}
+            </label>
+
+            <label style={labelStyle}>
+              Monthly Budget (optional)
+              <input
+                placeholder="e.g. 500.00"
+                value={formState.monthly_budget}
+                onChange={(event) => setFormState((current) => ({ ...current, monthly_budget: event.target.value }))}
+                style={inputStyle}
+                type="number"
+                min="0"
+                step="0.01"
+              />
+              {fieldErrors.monthly_budget ? <span style={fieldErrorStyle}>{fieldErrors.monthly_budget}</span> : null}
             </label>
           </div>
 
