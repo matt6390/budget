@@ -5,6 +5,7 @@ __pycache__/
 .Python
 venv/
 pdf_imports/
+test_pdfs/
 *.egg-info/
 dist/
 build/
