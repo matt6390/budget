@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 .Python
 venv/
+pdf_imports/
 *.egg-info/
 dist/
 build/
