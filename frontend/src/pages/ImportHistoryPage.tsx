@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import client from '../api/client'
+import { deleteImportSession } from '../api/pdfImport'
 import {
   COLORS,
   btnPrimaryStyle,
@@ -35,6 +36,7 @@ export default function ImportHistoryPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [viewingPdf, setViewingPdf] = useState<number | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null)
 
   useEffect(() => {
     const fetch = async () => {
@@ -63,6 +65,20 @@ export default function ImportHistoryPage() {
       setError('Could not open PDF. The file may no longer be available.')
     } finally {
       setViewingPdf(null)
+    }
+  }
+
+  const handleDeleteImport = async (sessionId: number) => {
+    if (!window.confirm('Delete this import and its uploaded PDF?')) return
+    setDeletingSessionId(sessionId)
+    setError('')
+    try {
+      await deleteImportSession(sessionId)
+      setSessions(prev => prev.filter(session => session.id !== sessionId))
+    } catch {
+      setError('Could not delete this import.')
+    } finally {
+      setDeletingSessionId(null)
     }
   }
 
@@ -104,6 +120,7 @@ export default function ImportHistoryPage() {
                   const badge = STATUS_LABELS[session.status] ?? STATUS_LABELS.pending
                   const count = session.extracted_data?.length ?? 0
                   const isLoadingPdf = viewingPdf === session.id
+                  const isDeleting = deletingSessionId === session.id
                   return (
                     <tr key={session.id}>
                       <td style={{ ...tableCellStyle, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -139,6 +156,13 @@ export default function ImportHistoryPage() {
                               Review →
                             </Link>
                           )}
+                          <button
+                            onClick={() => void handleDeleteImport(session.id)}
+                            disabled={isDeleting}
+                            style={deleteBtnStyle}
+                          >
+                            {isDeleting ? 'Deleting…' : '🗑 Delete'}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -169,5 +193,16 @@ const viewPdfBtnStyle: CSSProperties = {
   fontSize: '0.8rem',
   cursor: 'pointer',
   color: 'var(--text)',
+  whiteSpace: 'nowrap',
+}
+
+const deleteBtnStyle: CSSProperties = {
+  background: 'transparent',
+  border: '1px solid var(--error)',
+  borderRadius: '6px',
+  padding: '0.25rem 0.6rem',
+  fontSize: '0.8rem',
+  cursor: 'pointer',
+  color: 'var(--error)',
   whiteSpace: 'nowrap',
 }

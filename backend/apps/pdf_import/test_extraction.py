@@ -1,6 +1,4 @@
-import io
-from decimal import Decimal
-from apps.pdf_import.extraction import PurchaseParser, extract_purchases_from_pdf
+from apps.pdf_import.extraction import PurchaseParser
 
 
 class TestPurchaseParser:
@@ -65,6 +63,7 @@ class TestPurchaseParser:
         assert any('1234.56' in p['amount'] for p in purchases)
 
 
+
 if __name__ == '__main__':
     # Run basic tests
     test = TestPurchaseParser()
@@ -84,4 +83,3 @@ if __name__ == '__main__':
     print("✓ test_parse_with_commas_in_amounts passed")
     
     print("\nAll extraction tests passed!")
-

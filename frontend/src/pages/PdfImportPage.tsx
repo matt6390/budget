@@ -117,10 +117,12 @@ export const PdfImportPage: React.FC = () => {
   }
 
   const handleDeleteSession = async () => {
-    if (sessionId) {
-      try { await deleteImportSession(sessionId) } catch { /* silently ignore — already cleaned up or gone */ }
-    }
-    handleReset()
+    if (sessionId) await deleteImportSession(sessionId)
+    setSessionId(null)
+    setError(null)
+    setSuccessCount(0)
+    setSession(null)
+    navigate('/import-history', { replace: true })
   }
 
   const handleReset = () => {
@@ -244,4 +246,3 @@ const successIconStyle: CSSProperties = {
   color: 'var(--success)',
   margin: '0 auto 1.25rem',
 }
-

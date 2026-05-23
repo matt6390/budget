@@ -2,7 +2,7 @@ import io
 import re
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set, Tuple
 
 
 class PdfExtractor:
@@ -42,6 +42,10 @@ class PdfExtractor:
         if text.strip():
             return text
 
+        text = self._extract_with_ocr(zero_indexed)
+        if text.strip():
+            return text
+
         return ""
 
     def _extract_with_pdfminer(self, page_numbers: Optional[List[int]] = None) -> str:
@@ -61,6 +65,50 @@ class PdfExtractor:
             if page_numbers is not None:
                 pages = [reader.pages[i] for i in page_numbers if 0 <= i < len(reader.pages)]
             return "".join(page.extract_text() or "" for page in pages)
+        except Exception:
+            return ""
+
+    def _extract_with_ocr(self, page_numbers: Optional[List[int]] = None) -> str:
+        """
+        OCR fallback for image-only PDFs.
+
+        Uses pypdfium2 + pytesseract when available. If OCR dependencies are not
+        installed or OCR fails, returns an empty string.
+        """
+        try:
+            import pypdfium2 as pdfium
+            import pytesseract
+        except Exception:
+            return ""
+
+        try:
+            doc = pdfium.PdfDocument(self.pdf_content)
+            total_pages = len(doc)
+            indices = page_numbers if page_numbers is not None else list(range(total_pages))
+            texts: List[str] = []
+
+            for idx in indices:
+                if idx < 0 or idx >= total_pages:
+                    continue
+                page = doc[idx]
+                bitmap = None
+                try:
+                    bitmap = page.render(scale=2.0)
+                    pil_image = bitmap.to_pil()
+                    text = pytesseract.image_to_string(pil_image)
+                    if text.strip():
+                        texts.append(text)
+                except Exception:
+                    continue
+                finally:
+                    if hasattr(page, 'close'):
+                        page.close()
+                    if bitmap is not None and hasattr(bitmap, 'close'):
+                        bitmap.close()
+
+            if hasattr(doc, 'close'):
+                doc.close()
+            return "\n".join(texts)
         except Exception:
             return ""
 
@@ -108,7 +156,20 @@ class PurchaseParser:
     # MM/DD date exactly filling a line (bank statement column)
     _DATE_COL_RE = re.compile(r'^\d{2}/\d{2}$')
     # Amount: optional minus, digits with optional commas, two decimal places
-    _AMOUNT_RE = re.compile(r'^-?[\d,]+\.\d{2}$|^-?\.\d{2}$')
+    _AMOUNT_RE = re.compile(r'^\$?\s*-?[\d,]+\.\d{2}-?$|^\$?\s*-?\.\d{2}-?$')
+    _REFERENCE_TOKEN_RE = re.compile(r'^[A-Z0-9]{10,}$')
+    _NON_MERCHANT_EXACT = {
+        'Transactions',
+        'Transactions (continued)',
+        'Description',
+        'Reference Number',
+        'Trans Date Post Date',
+        'Trans Date Post Date Card Reference Number',
+        'Total Payments And Credits For This Period',
+        'Fees',
+        'Interest Charged',
+        'Account Summary',
+    }
 
     # Full-date formats for inline parsing
     _FULL_DATE_PATTERNS = [
@@ -117,8 +178,8 @@ class PurchaseParser:
         r'(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b)',
     ]
     _INLINE_AMOUNT_PATTERNS = [
-        r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)',
-        r'(?:^|\s)(\d+(?:,\d{3})*\.\d{2})(?:\s|$)',
+        r'\$\s*([()]?-?\d+(?:,\d{3})*(?:\.\d{2})?-?[)]?)',
+        r'(?:^|\s)([()]?-?\d+(?:,\d{3})*\.\d{2}-?[)]?)(?:\s|$)',
     ]
 
     def __init__(self, text: str, statement_year: Optional[int] = None):
@@ -143,39 +204,35 @@ class PurchaseParser:
         as their own column blocks (pdfminer extracts them sequentially).
         """
         clean_lines = self._clean_lines()
+        section_lines = self._transaction_section_lines(clean_lines)
 
         all_dates: List[str] = []
         all_merchants: List[str] = []
         all_amounts: List[str] = []
-        in_amounts_section = False
-
-        for line in clean_lines:
-            if '$ Amount' in line or line == '$ Amount':
-                in_amounts_section = True
-                continue
-
-            if in_amounts_section:
-                if self._AMOUNT_RE.match(line):
-                    all_amounts.append(line)
-                # Stop collecting amounts at obvious footer content
-            elif self._DATE_COL_RE.match(line):
+        for line in section_lines:
+            if self._DATE_COL_RE.match(line):
                 all_dates.append(line)
             elif self._AMOUNT_RE.match(line):
                 all_amounts.append(line)
+            elif self._is_non_merchant_line(line):
+                continue
             else:
                 all_merchants.append(line)
 
+        # Some statements include two date columns (transaction + posting date).
+        # Keep one date stream when date count is materially larger than amounts.
+        if all_dates and all_amounts and len(all_dates) > int(len(all_amounts) * 1.4):
+            all_dates = all_dates[:len(all_dates) // 2]
+
         n = min(len(all_dates), len(all_merchants), len(all_amounts))
-        # Require a reasonable match: at least 3 triples and counts must agree
-        if n < 3 or not (len(all_dates) == len(all_merchants) == len(all_amounts)):
+        # Require a reasonable match: at least 3 tuples.
+        if n < 3:
             return []
 
         purchases = []
         for i in range(n):
-            raw_amount = all_amounts[i].replace(',', '')
-            try:
-                amount = Decimal(raw_amount)
-            except Exception:
+            amount = self._parse_amount(all_amounts[i])
+            if amount is None:
                 continue
             if amount <= 0:
                 continue  # Skip credits / payments
@@ -192,6 +249,51 @@ class PurchaseParser:
             })
 
         return purchases
+
+    def _transaction_section_lines(self, lines: List[str]) -> List[str]:
+        """
+        Prefer transaction sections on statement-style PDFs.
+        Falls back to all cleaned lines when no transaction header is found.
+        """
+        start_idx = 0
+        for i, line in enumerate(lines):
+            if 'Trans Date' in line and 'Post Date' in line:
+                start_idx = i + 1
+                break
+        return lines[start_idx:] if start_idx else lines
+
+    def _is_non_merchant_line(self, line: str) -> bool:
+        if line in self._NON_MERCHANT_EXACT:
+            return True
+        if self._REFERENCE_TOKEN_RE.match(line):
+            return True
+        if 'XXXX XXXX' in line:
+            return True
+        if line.startswith('PAGE '):
+            return True
+        if not re.search(r'[A-Za-z]', line):
+            return True
+        return False
+
+    def _parse_amount(self, raw_amount: str) -> Optional[Decimal]:
+        amount_text = raw_amount.replace('$', '').replace(',', '').replace(' ', '')
+        is_negative = False
+
+        if amount_text.endswith('-'):
+            is_negative = True
+            amount_text = amount_text[:-1]
+        if amount_text.startswith('-'):
+            is_negative = True
+            amount_text = amount_text[1:]
+        if amount_text.startswith('(') and amount_text.endswith(')'):
+            is_negative = True
+            amount_text = amount_text[1:-1]
+
+        try:
+            amount = Decimal(amount_text)
+        except Exception:
+            return None
+        return -amount if is_negative else amount
 
     def _clean_lines(self) -> List[str]:
         """Strip and filter raw lines, removing headers, footers, and metadata."""
@@ -294,11 +396,10 @@ class PurchaseParser:
         for pattern in self._INLINE_AMOUNT_PATTERNS:
             m = re.search(pattern, line)
             if m:
-                try:
-                    amount = Decimal(m.group(1).replace(',', ''))
-                    return str(amount)
-                except Exception:
+                amount = self._parse_amount(m.group(1))
+                if amount is None or amount <= 0:
                     continue
+                return str(amount)
         return None
 
     def _extract_inline_merchant(self, line: str) -> str:
@@ -357,9 +458,27 @@ def extract_purchases_from_pdf(
 
     if page_numbers:
         text = extractor.extract_text_from_pages(page_numbers)
-    else:
-        text = extractor.extract_text()
+        parser = PurchaseParser(text)
+        return parser.parse()
 
-    parser = PurchaseParser(text)
-    return parser.parse()
+    # Default path: parse per-page first so mixed-content pages do not suppress
+    # extraction from transaction pages (e.g., statement cover + transaction page).
+    page_count = extractor.get_page_count()
+    if page_count > 1:
+        purchases: List[Dict[str, Any]] = []
+        seen: Set[Tuple[str, str, str]] = set()
+        for page_num in range(1, page_count + 1):
+            page_text = extractor.extract_text_from_pages([page_num])
+            parsed = PurchaseParser(page_text).parse()
+            for purchase in parsed:
+                key = (purchase['date'], purchase['merchant'], purchase['amount'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                purchases.append(purchase)
+        if purchases:
+            return purchases
 
+    # Fallback to combined-text parsing.
+    text = extractor.extract_text()
+    return PurchaseParser(text).parse()

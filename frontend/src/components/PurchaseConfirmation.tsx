@@ -22,7 +22,7 @@ interface PurchaseConfirmationProps {
   session: PdfImportSession
   onConfirm: (purchases: ConfirmPurchaseData[]) => Promise<void>
   onCancel: () => void
-  onDelete: () => void
+  onDelete: () => Promise<void>
 }
 
 export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
@@ -38,6 +38,7 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
   const [autoSuggested, setAutoSuggested] = useState<Set<number>>(new Set())
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // New category panel
@@ -94,7 +95,7 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
   }
 
   const handleConfirm = async () => {
-    if (purchases.length === 0) return
+    if (purchases.length === 0 || deleting) return
     setLoading(true); setError(null)
     try {
       await onConfirm(purchases)
@@ -107,6 +108,24 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
       }
       setError(msg)
       setLoading(false)
+    }
+  }
+
+  const handleDeleteImport = async () => {
+    setDeleting(true)
+    setError(null)
+    try {
+      await onDelete()
+    } catch (err: unknown) {
+      let msg = 'Failed to delete uploaded statement'
+      if (axios.isAxiosError(err) && err.response?.data?.error) {
+        msg = err.response.data.error
+      } else if (err instanceof Error) {
+        msg = err.message
+      }
+      setError(msg)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -137,7 +156,23 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
         <p style={{ margin: '0 0 1.5rem', color: 'var(--muted)', fontSize: '0.85rem' }}>
           Try selecting a different page, or verify the PDF contains text (not a scanned image).
         </p>
-        <button onClick={onCancel} style={btnPrimaryStyle}>Try Again</button>
+        {error && (
+          <p style={{ margin: '0 0 1rem', color: 'var(--error)', fontSize: '0.85rem' }}>{error}</p>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button onClick={onCancel} disabled={deleting} style={btnPrimaryStyle}>Try Again</button>
+          <button
+            onClick={() => {
+              if (window.confirm('Delete this uploaded statement?')) {
+                void handleDeleteImport()
+              }
+            }}
+            disabled={deleting}
+            style={{ ...btnDangerStyle, minWidth: 190 }}
+          >
+            {deleting ? 'Deleting…' : 'Delete Uploaded Statement'}
+          </button>
+        </div>
       </div>
     )
   }
@@ -318,24 +353,24 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
       {/* Sticky action bar */}
       <div style={actionBarStyle}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={onCancel} disabled={loading} style={secondaryButtonStyle}>
+          <button onClick={onCancel} disabled={loading || deleting} style={secondaryButtonStyle}>
             ← Back
           </button>
           <button
             onClick={() => {
               if (window.confirm('Cancel this import? The uploaded PDF will be deleted.')) {
-                onDelete()
+                void handleDeleteImport()
               }
             }}
-            disabled={loading}
+            disabled={loading || deleting}
             style={{ ...btnDangerStyle, fontSize: '0.875rem' }}
           >
-            🗑️ Delete Import
+            {deleting ? 'Deleting…' : '🗑️ Delete Import'}
           </button>
         </div>
         <button
           onClick={handleConfirm}
-          disabled={loading || purchases.length === 0}
+          disabled={loading || deleting || purchases.length === 0}
           style={{ ...btnPrimaryStyle, display: 'flex', alignItems: 'center', gap: '0.5rem' }}
         >
           {loading ? (
