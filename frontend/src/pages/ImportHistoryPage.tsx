@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import client from '../api/client'
-import { deleteImportSession } from '../api/pdfImport'
+import { deleteImportSession, type PdfImportSession } from '../api/pdfImport'
 import {
   COLORS,
   btnPrimaryStyle,
@@ -16,15 +16,6 @@ import {
   tableCellStyle,
 } from '../ui'
 
-type ImportSession = {
-  id: number
-  pdf_file: string
-  status: 'pending' | 'extracted' | 'confirmed'
-  extracted_data: { date: string; merchant: string; amount: string }[] | null
-  created_at: string
-  updated_at: string
-}
-
 const STATUS_LABELS: Record<string, { label: string; bg: string; color: string }> = {
   pending: { label: 'Pending', bg: 'var(--border)', color: 'var(--text-muted)' },
   extracted: { label: 'Awaiting Review', bg: '#fef3c7', color: '#92400e' },
@@ -32,7 +23,7 @@ const STATUS_LABELS: Record<string, { label: string; bg: string; color: string }
 }
 
 export default function ImportHistoryPage() {
-  const [sessions, setSessions] = useState<ImportSession[]>([])
+  const [sessions, setSessions] = useState<PdfImportSession[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [viewingPdf, setViewingPdf] = useState<number | null>(null)
@@ -42,7 +33,7 @@ export default function ImportHistoryPage() {
     const fetch = async () => {
       setIsLoading(true)
       try {
-        const res = await client.get<ImportSession[]>('/purchases/import/')
+        const res = await client.get<PdfImportSession[]>('/purchases/import/')
         setSessions(res.data)
       } catch {
         setError('Unable to load import history.')

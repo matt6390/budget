@@ -1,6 +1,13 @@
 export type User = { id: number; username: string; email: string }
 
-export type Category = { id: number; name: string; color: string; monthly_budget: string | null; created_at: string }
+export type Category = {
+  id: number
+  name: string
+  theme: string | null
+  color: string
+  monthly_budget: string | null
+  created_at: string
+}
 
 export type IncomeSource = {
   id: number

@@ -14,7 +14,7 @@ import {
   labelStyle,
   mutedTextStyle,
   pageTitleStyle,
-  primaryButtonStyle,
+  btnPrimaryStyle,
   secondaryButtonStyle,
 } from '../ui'
 
@@ -186,7 +186,7 @@ export default function SavingsPage() {
           <h1 style={pageTitleStyle}>Savings Goals</h1>
           <p style={mutedTextStyle}>Set aside money toward things you want to buy.</p>
         </div>
-        <button style={primaryButtonStyle} onClick={openAddGoal}>＋ New Goal</button>
+        <button style={btnPrimaryStyle} onClick={openAddGoal}>＋ New Goal</button>
       </div>
 
       {error ? <p style={{ ...errorTextStyle, marginBottom: '1rem' }}>{error}</p> : null}
@@ -244,7 +244,7 @@ export default function SavingsPage() {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
           <button style={secondaryButtonStyle} onClick={() => setShowGoalModal(false)}>Cancel</button>
-          <button style={primaryButtonStyle} onClick={() => void saveGoal()} disabled={goalSaving}>
+          <button style={btnPrimaryStyle} onClick={() => void saveGoal()} disabled={goalSaving}>
             {goalSaving ? 'Saving…' : editingGoal ? 'Save Changes' : 'Create Goal'}
           </button>
         </div>
@@ -272,7 +272,7 @@ export default function SavingsPage() {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
           <button style={secondaryButtonStyle} onClick={() => setContributingTo(null)}>Cancel</button>
-          <button style={primaryButtonStyle} onClick={() => void saveContribution()} disabled={contribSaving}>
+          <button style={btnPrimaryStyle} onClick={() => void saveContribution()} disabled={contribSaving}>
             {contribSaving ? 'Saving…' : 'Add Contribution'}
           </button>
         </div>

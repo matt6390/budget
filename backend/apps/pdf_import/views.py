@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, JSONParser
 
+from apps.mixins import UserOwnedQuerySetMixin
 from .models import PdfImportSession, MerchantCategory
 from .serializers import PdfImportSessionSerializer, MerchantCategorySerializer
 from .extraction import extract_purchases_from_pdf, PdfExtractor
@@ -14,19 +15,27 @@ from apps.budgets.models import Purchase, Category
 logger = logging.getLogger(__name__)
 
 
-class UserOwnedQuerySetMixin:
-    def get_queryset(self):
-        return self.queryset.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-
 class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
     queryset = PdfImportSession.objects.all()
     serializer_class = PdfImportSessionSerializer
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, JSONParser]
+
+    def _parse_page_numbers(self, page_numbers_param):
+        """Parse page numbers from form input; return None when omitted."""
+        if not page_numbers_param:
+            return None
+
+        if isinstance(page_numbers_param, str):
+            parsed = [int(p.strip()) for p in page_numbers_param.split(',') if p.strip().isdigit()]
+        elif isinstance(page_numbers_param, list):
+            parsed = [int(p) for p in page_numbers_param if isinstance(p, (int, str)) and str(p).isdigit()]
+        else:
+            parsed = []
+
+        if not parsed:
+            raise ValueError('Invalid page numbers')
+        return sorted(set(parsed))
 
     @action(detail=False, methods=['post'], url_path='page-count')
     def page_count(self, request):
@@ -44,63 +53,38 @@ class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='upload')
     def upload(self, request):
         """Upload PDF and extract purchase data."""
+        pdf_file = request.FILES.get('pdf_file')
+        if not pdf_file:
+            return Response({'error': 'No PDF file provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not pdf_file.name.lower().endswith('.pdf'):
+            return Response({'error': 'File must be a PDF'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            pdf_file = request.FILES.get('pdf_file')
-            
-            # Get page_numbers as either comma-separated string or list
-            page_numbers_param = request.data.get('page_numbers')
-            page_numbers = None
-            
-            if page_numbers_param:
-                if isinstance(page_numbers_param, str):
-                    # Handle comma-separated string
-                    page_numbers = [int(p.strip()) for p in page_numbers_param.split(',') if p.strip().isdigit()]
-                elif isinstance(page_numbers_param, list):
-                    # Handle list of strings
-                    page_numbers = [int(p) for p in page_numbers_param if isinstance(p, (int, str)) and str(p).isdigit()]
-                
-                if not page_numbers:
-                    return Response({'error': 'Invalid page numbers'}, status=status.HTTP_400_BAD_REQUEST)
+            page_numbers = self._parse_page_numbers(request.data.get('page_numbers'))
+        except ValueError:
+            return Response({'error': 'Invalid page numbers'}, status=status.HTTP_400_BAD_REQUEST)
 
-            if not pdf_file:
-                return Response({'error': 'No PDF file provided'}, status=status.HTTP_400_BAD_REQUEST)
+        pdf_content = pdf_file.read()
+        if not pdf_content:
+            return Response({'error': 'PDF file is empty'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Validate file is actually a PDF
-            if not pdf_file.name.lower().endswith('.pdf'):
-                return Response({'error': 'File must be a PDF'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            extracted_data = extract_purchases_from_pdf(pdf_content, page_numbers)
+        except ValueError as exc:
+            logger.warning('Extraction error for user %s: %s', request.user.id, exc)
+            return Response({'error': f'Failed to extract PDF: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Unexpected error during extraction for user %s', request.user.id)
+            return Response({'error': 'Failed to process PDF'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            try:
-                # Read PDF content
-                pdf_content = pdf_file.read()
-                
-                # Validate PDF has content
-                if not pdf_content:
-                    return Response({'error': 'PDF file is empty'}, status=status.HTTP_400_BAD_REQUEST)
-                
-                # Extract purchases
-                extracted_data = extract_purchases_from_pdf(pdf_content, page_numbers)
-
-                # Create session
-                session = PdfImportSession.objects.create(
-                    user=request.user,
-                    pdf_file=pdf_file,
-                    status='extracted',
-                    extracted_data=extracted_data,
-                )
-
-                return Response(PdfImportSessionSerializer(session).data, status=status.HTTP_201_CREATED)
-            except ValueError as e:
-                # Extraction error
-                logger.warning(f'Extraction error for user {request.user}: {str(e)}')
-                return Response({'error': f'Failed to extract PDF: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
-                # Other extraction errors
-                logger.exception(f'Unexpected error during extraction for user {request.user}')
-                return Response({'error': 'Failed to process PDF'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        except Exception as e:
-            # Top-level error handling
-            logger.exception(f'Unexpected error in upload handler for user {request.user}')
-            return Response({'error': 'Server error during upload'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        session = PdfImportSession.objects.create(
+            user=request.user,
+            pdf_file=pdf_file,
+            status='extracted',
+            extracted_data=extracted_data,
+        )
+        return Response(PdfImportSessionSerializer(session).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='confirm')
     def confirm(self, request, pk=None):
@@ -229,7 +213,7 @@ class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
             try:
                 session.pdf_file.delete(save=False)
             except Exception:
-                pass
+                logger.warning('Failed to delete PDF file for session %s', session.id, exc_info=True)
         session.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -241,16 +225,13 @@ class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
         if not merchant_name:
             return Response({'error': 'merchant_name query parameter required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            merchant_cat = MerchantCategory.objects.get(user=request.user, merchant_name=merchant_name)
-            if merchant_cat.category:
-                return Response({
-                    'merchant_name': merchant_name,
-                    'category_id': merchant_cat.category.id,
-                    'category_name': merchant_cat.category.name,
-                })
-        except MerchantCategory.DoesNotExist:
-            pass
+        mc = MerchantCategory.objects.filter(user=request.user, merchant_name=merchant_name).select_related('category').first()
+        if mc and mc.category:
+            return Response({
+                'merchant_name': merchant_name,
+                'category_id': mc.category.id,
+                'category_name': mc.category.name,
+            })
 
         return Response({
             'merchant_name': merchant_name,
@@ -263,7 +244,3 @@ class MerchantCategoryViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
     queryset = MerchantCategory.objects.all()
     serializer_class = MerchantCategorySerializer
     permission_classes = [IsAuthenticated]
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-

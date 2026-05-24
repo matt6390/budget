@@ -42,6 +42,17 @@ class BudgetTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['name'], 'Housing')
 
+    def test_create_category_with_theme(self):
+        response = self.client.post(
+            '/api/budget/categories/',
+            {'name': 'Groceries', 'theme': 'Food', 'color': '#22c55e'},
+            format='json',
+            **self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['theme'], 'Food')
+
     def test_category_isolation(self):
         other_user, other_client, other_headers = self.create_client_for_user('second-user')
 

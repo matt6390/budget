@@ -25,6 +25,31 @@ interface PurchaseConfirmationProps {
   onDelete: () => Promise<void>
 }
 
+const sortCategoriesByName = (items: Category[]) => {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+const applyMerchantCategoryMappings = (
+  items: ConfirmPurchaseData[],
+  mappings: Record<string, number>,
+  suggestedSeed: Set<number> = new Set(),
+) => {
+  const updated = items.map(p => ({ ...p }))
+  const suggested = new Set<number>(suggestedSeed)
+
+  for (let i = 0; i < updated.length; i++) {
+    if (updated[i].category) continue
+    const merchant = (updated[i].merchant || '').trim()
+    if (!merchant) continue
+    const categoryId = mappings[merchant]
+    if (!categoryId) continue
+    updated[i] = { ...updated[i], category: categoryId }
+    suggested.add(i)
+  }
+
+  return { updated, suggested }
+}
+
 export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
   session,
   onConfirm,
@@ -47,40 +72,82 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
   const [newCatColor, setNewCatColor] = useState('#6366f1')
   const [newCatError, setNewCatError] = useState('')
   const [creatingCat, setCreatingCat] = useState(false)
+  const [merchantCategoryOverrides, setMerchantCategoryOverrides] = useState<Record<string, number>>({})
+
+  const reevaluateUnassignedPurchases = async (
+    basePurchases: ConfirmPurchaseData[],
+    overrides: Record<string, number>,
+    suggestedSeed: Set<number> = new Set(),
+  ) => {
+    const localApplied = applyMerchantCategoryMappings(basePurchases, overrides, suggestedSeed)
+
+    const merchantNames = [...new Set(
+      localApplied.updated
+        .filter(p => !p.category && p.merchant)
+        .map(p => p.merchant.trim())
+        .filter(Boolean),
+    )]
+
+    if (merchantNames.length === 0) {
+      setPurchases(localApplied.updated)
+      setAutoSuggested(localApplied.suggested)
+      return
+    }
+
+    try {
+      const suggestions = await suggestCategoryBatch(merchantNames)
+      const serverMappings: Record<string, number> = {}
+      for (const merchant of merchantNames) {
+        if (overrides[merchant]) continue
+        const hit = suggestions[merchant]
+        if (hit?.category_id) {
+          serverMappings[merchant] = hit.category_id
+        }
+      }
+      const combinedMappings = { ...serverMappings, ...overrides }
+      const finalApplied = applyMerchantCategoryMappings(localApplied.updated, combinedMappings, localApplied.suggested)
+      setPurchases(finalApplied.updated)
+      setAutoSuggested(finalApplied.suggested)
+    } catch {
+      setPurchases(localApplied.updated)
+      setAutoSuggested(localApplied.suggested)
+    }
+  }
 
   // Load categories + category suggestions
   useEffect(() => {
-    client.get<Category[]>('/budget/categories/').then(r => setCategories(r.data)).catch(() => {})
+    client.get<Category[]>('/budget/categories/').then(r => setCategories(sortCategoriesByName(r.data))).catch(() => {})
   }, [])
 
   useEffect(() => {
     if (purchases.length === 0) { setSuggestionsLoading(false); return }
-    const loadSuggestions = async () => {
-      try {
-        const merchantNames = [...new Set(purchases.map(p => p.merchant).filter(Boolean))]
-        const suggestions = await suggestCategoryBatch(merchantNames)
-        const updated = purchases.map(p => ({ ...p }))
-        const suggested = new Set<number>()
-        for (let i = 0; i < updated.length; i++) {
-          const hit = suggestions[updated[i].merchant]
-          if (hit?.category_id) {
-            updated[i] = { ...updated[i], category: hit.category_id }
-            suggested.add(i)
-          }
-        }
-        setPurchases(updated)
-        setAutoSuggested(suggested)
-      } catch { /* silently skip */ }
-      finally { setSuggestionsLoading(false) }
-    }
-    void loadSuggestions()
+    void reevaluateUnassignedPurchases(purchases, merchantCategoryOverrides, new Set())
+      .finally(() => setSuggestionsLoading(false))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFieldChange = (index: number, field: keyof ConfirmPurchaseData, value: string | number | undefined) => {
     const updated = [...purchases]
     updated[index] = { ...updated[index], [field]: value }
     if (field === 'category') {
-      setAutoSuggested(prev => { const next = new Set(prev); next.delete(index); return next })
+      const merchant = (updated[index].merchant || '').trim()
+      const nextOverrides = { ...merchantCategoryOverrides }
+      if (merchant) {
+        const numericCategory = typeof value === 'number' ? value : undefined
+        if (numericCategory) {
+          nextOverrides[merchant] = numericCategory
+        } else {
+          delete nextOverrides[merchant]
+        }
+      }
+      setMerchantCategoryOverrides(nextOverrides)
+      const nextSuggested = new Set(autoSuggested)
+      nextSuggested.delete(index)
+      void reevaluateUnassignedPurchases(updated, nextOverrides, nextSuggested)
+      return
+    }
+    if (field === 'merchant') {
+      void reevaluateUnassignedPurchases(updated, merchantCategoryOverrides, autoSuggested)
+      return
     }
     setPurchases(updated)
   }
@@ -134,7 +201,7 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
     setCreatingCat(true); setNewCatError('')
     try {
       const response = await client.post<Category>('/budget/categories/', { name: newCatName.trim(), color: newCatColor })
-      setCategories(prev => [...prev, response.data])
+      setCategories(prev => sortCategoriesByName([...prev, response.data]))
       setNewCatName('')
       setNewCatColor('#6366f1')
       setShowNewCat(false)

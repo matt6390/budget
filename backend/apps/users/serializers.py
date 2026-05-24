@@ -1,5 +1,4 @@
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import check_password
 from rest_framework import serializers
 
 User = get_user_model()
@@ -18,11 +17,6 @@ class SignupSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['username', 'email', 'password']
-
-    def validate_password(self, value: str) -> str:
-        if len(value) < 8:
-            raise serializers.ValidationError('Password must be at least 8 characters long.')
-        return value
 
     def create(self, validated_data):
         password = validated_data.pop('password')
@@ -49,12 +43,11 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
         current_password = attrs.get('current_password')
 
         if password:
-            user = self.instance
             if not current_password:
                 raise serializers.ValidationError(
                     {'current_password': ['Current password is required when changing password.']}
                 )
-            if user is None or not check_password(current_password, user.password):
+            if not self.instance.check_password(current_password):
                 raise serializers.ValidationError({'current_password': ['Current password is incorrect.']})
 
         return attrs

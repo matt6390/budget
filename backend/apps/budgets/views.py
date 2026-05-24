@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.mixins import UserOwnedQuerySetMixin
 from .models import (
     Category,
     IncomeSource,
@@ -74,14 +75,6 @@ def calculate_payoff(balance: Decimal, annual_rate_pct: Decimal, monthly_payment
         months += 1
 
     return months, total_interest
-
-
-class UserOwnedQuerySetMixin:
-    def get_queryset(self):
-        return self.queryset.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
 
 
 class CategoryViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):

@@ -150,18 +150,6 @@ export const secondaryButtonStyle: CSSProperties = {
   fontSize: '0.95rem',
 }
 
-// Alias matching the name used in newer pages
-export const primaryButtonStyle: CSSProperties = {
-  background: 'var(--primary)',
-  color: 'var(--invert)',
-  border: 'none',
-  borderRadius: '8px',
-  padding: '0.65rem 1.25rem',
-  fontWeight: 700,
-  cursor: 'pointer',
-  fontSize: '0.95rem',
-}
-
 export const fieldStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -193,7 +181,83 @@ export const emptyStateStyle: CSSProperties = {
   margin: 0,
 }
 
-export type FieldErrors = Record<string, string>
+// ------------------------------------------------------------------
+// Shared auth-form styles (Login + Signup pages)
+// ------------------------------------------------------------------
+
+export const authPageStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--bg)',
+  display: 'flex',
+  justifyContent: 'center',
+  minHeight: '100vh',
+}
+
+export const authCardStyle: CSSProperties = {
+  background: 'var(--card-bg)',
+  borderRadius: '12px',
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '1rem',
+  padding: '2rem',
+  width: '100%',
+  maxWidth: '420px',
+}
+
+export const authLabelStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  fontWeight: 600,
+  gap: '0.5rem',
+  color: 'var(--text)',
+}
+
+export const authInputStyle: CSSProperties = {
+  border: '1px solid var(--border-input)',
+  borderRadius: '8px',
+  fontSize: '1rem',
+  padding: '0.75rem',
+  background: 'var(--input-bg)',
+  color: 'var(--text)',
+}
+
+export const authButtonStyle: CSSProperties = {
+  background: 'var(--primary)',
+  border: 'none',
+  borderRadius: '8px',
+  color: 'var(--invert)',
+  cursor: 'pointer',
+  fontSize: '1rem',
+  fontWeight: 700,
+  padding: '0.75rem 1rem',
+}
+
+export const authErrorStyle: CSSProperties = {
+  color: 'var(--error)',
+  margin: 0,
+}
+
+export const authFieldErrorStyle: CSSProperties = {
+  color: 'var(--error)',
+  fontSize: '0.875rem',
+  fontWeight: 400,
+  margin: 0,
+}
+
+// ------------------------------------------------------------------
+// Error helpers
+// ------------------------------------------------------------------
+
+/**
+ * Extracts the first human-readable error string from an API response field value.
+ * Handles both plain strings and DRF-style string arrays.
+ */
+export const getFirstFieldError = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
+  return ''
+}
 
 export const formatCurrency = (value: string | number) =>
   Number(value).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
@@ -220,7 +284,7 @@ export const formatMonthLabel = (month: string) => {
 }
 
 export const extractFieldErrors = (err: unknown, fallback = 'Something went wrong. Please try again.') => {
-  const fieldErrors: FieldErrors = {}
+  const fieldErrors: Record<string, string> = {}
   let generalError = fallback
 
   if (axios.isAxiosError(err) && err.response?.data) {

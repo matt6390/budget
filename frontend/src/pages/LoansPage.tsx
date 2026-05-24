@@ -14,7 +14,7 @@ import {
   labelStyle,
   mutedTextStyle,
   pageTitleStyle,
-  primaryButtonStyle,
+  btnPrimaryStyle,
   secondaryButtonStyle,
 } from '../ui'
 
@@ -182,7 +182,7 @@ export default function LoansPage() {
           <h1 style={pageTitleStyle}>Loans & Mortgage</h1>
           <p style={mutedTextStyle}>Track your loans and see how extra payments could save you thousands.</p>
         </div>
-        <button style={primaryButtonStyle} onClick={openAdd}>＋ Add Loan</button>
+        <button style={btnPrimaryStyle} onClick={openAdd}>＋ Add Loan</button>
       </div>
 
       {error ? <p style={{ ...errorTextStyle, marginBottom: '1rem' }}>{error}</p> : null}
@@ -283,7 +283,7 @@ export default function LoansPage() {
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
           <button style={secondaryButtonStyle} onClick={() => setShowModal(false)}>Cancel</button>
-          <button style={primaryButtonStyle} onClick={() => void saveLoan()} disabled={saving}>
+          <button style={btnPrimaryStyle} onClick={() => void saveLoan()} disabled={saving}>
             {saving ? 'Saving…' : editingLoan ? 'Save Changes' : 'Add Loan'}
           </button>
         </div>

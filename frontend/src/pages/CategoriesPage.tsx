@@ -28,12 +28,14 @@ type FieldErrors = Record<string, string>
 
 type CategoryFormState = {
   name: string
+  theme: string
   color: string
   monthly_budget: string
 }
 
 const defaultFormState: CategoryFormState = {
   name: '',
+  theme: '',
   color: '#6366f1',
   monthly_budget: '',
 }
@@ -99,7 +101,12 @@ export default function CategoriesPage() {
 
   const openEditModal = (category: Category) => {
     setEditingCategory(category)
-    setFormState({ name: category.name, color: category.color, monthly_budget: category.monthly_budget ?? '' })
+    setFormState({
+      name: category.name,
+      theme: category.theme ?? '',
+      color: category.color,
+      monthly_budget: category.monthly_budget ?? '',
+    })
     setFieldErrors({})
     setGeneralError('')
     setIsModalOpen(true)
@@ -114,6 +121,7 @@ export default function CategoriesPage() {
     try {
       const payload = {
         name: formState.name,
+        theme: formState.theme.trim() !== '' ? formState.theme.trim() : null,
         color: formState.color,
         monthly_budget: formState.monthly_budget !== '' ? formState.monthly_budget : null,
       }
@@ -147,6 +155,20 @@ export default function CategoriesPage() {
     }
   }
 
+  const groupedCategories = categories.reduce<Record<string, Category[]>>((groups, category) => {
+    const key = category.theme?.trim() ? category.theme.trim() : 'Ungrouped'
+    if (!groups[key]) {
+      groups[key] = []
+    }
+    groups[key].push(category)
+    return groups
+  }, {})
+  const themeNames = Object.keys(groupedCategories).sort((a, b) => {
+    if (a === 'Ungrouped') return 1
+    if (b === 'Ungrouped') return -1
+    return a.localeCompare(b)
+  })
+
   return (
     <div>
       <div style={pageHeaderStyle}>
@@ -169,51 +191,58 @@ export default function CategoriesPage() {
           <p style={emptyStateStyle}>No categories created yet.</p>
         </section>
       ) : (
-        <section style={gridStyle}>
-          {categories.map((category) => {
-            const budget = category.monthly_budget ? parseFloat(category.monthly_budget) : null
-            const spent = spendingMap[category.id] ?? 0
-            const pct = budget && budget > 0 ? Math.min((spent / budget) * 100, 100) : 0
-            const overBudget = budget !== null && spent > budget
-            const nearBudget = budget !== null && !overBudget && pct >= 75
-            const barColor = overBudget ? 'var(--error)' : nearBudget ? '#f59e0b' : 'var(--primary)'
-            return (
-              <article key={category.id} style={cardStyle}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                    <span style={{ ...dotStyle, background: category.color }} />
-                    <div>
-                      <h2 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h2>
+        <div style={themeSectionListStyle}>
+          {themeNames.map((themeName) => (
+            <section key={themeName}>
+              <h2 style={themeHeadingStyle}>{themeName}</h2>
+              <div style={gridStyle}>
+                {groupedCategories[themeName].map((category) => {
+                  const budget = category.monthly_budget ? parseFloat(category.monthly_budget) : null
+                  const spent = spendingMap[category.id] ?? 0
+                  const pct = budget && budget > 0 ? Math.min((spent / budget) * 100, 100) : 0
+                  const overBudget = budget !== null && spent > budget
+                  const nearBudget = budget !== null && !overBudget && pct >= 75
+                  const barColor = overBudget ? 'var(--error)' : nearBudget ? '#f59e0b' : 'var(--primary)'
+                  return (
+                    <article key={category.id} style={cardStyle}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                          <span style={{ ...dotStyle, background: category.color }} />
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h3>
+                            {budget ? (
+                              <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
+                                Budget: {formatCurrency(budget)}
+                                {overBudget && <span style={{ color: 'var(--error)', marginLeft: '0.4rem', fontWeight: 600 }}>⚠️ Over budget</span>}
+                              </p>
+                            ) : (
+                              <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>No budget set</p>
+                            )}
+                          </div>
+                        </div>
+                        <div style={actionsRowStyle}>
+                          <button onClick={() => openEditModal(category)} style={btnGhostStyle} type="button">✏️</button>
+                          <button onClick={() => handleDelete(category)} style={btnDangerStyle} type="button">🗑️</button>
+                        </div>
+                      </div>
                       {budget ? (
-                        <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
-                          Budget: {formatCurrency(budget)}
-                          {overBudget && <span style={{ color: 'var(--error)', marginLeft: '0.4rem', fontWeight: 600 }}>⚠️ Over budget</span>}
-                        </p>
-                      ) : (
-                        <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>No budget set</p>
-                      )}
-                    </div>
-                  </div>
-                  <div style={actionsRowStyle}>
-                    <button onClick={() => openEditModal(category)} style={btnGhostStyle} type="button">✏️</button>
-                    <button onClick={() => handleDelete(category)} style={btnDangerStyle} type="button">🗑️</button>
-                  </div>
-                </div>
-                {budget ? (
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
-                      <span>{formatCurrency(spent)} spent</span>
-                      <span>{Math.round(pct)}% of {formatCurrency(budget)}</span>
-                    </div>
-                    <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '999px', transition: 'width 0.3s' }} />
-                    </div>
-                  </div>
-                ) : null}
-              </article>
-            )
-          })}
-        </section>
+                        <div style={{ marginTop: '0.75rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
+                            <span>{formatCurrency(spent)} spent</span>
+                            <span>{Math.round(pct)}% of {formatCurrency(budget)}</span>
+                          </div>
+                          <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '999px', transition: 'width 0.3s' }} />
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
 
       <Modal isOpen={isModalOpen} onClose={closeModal} title={editingCategory ? 'Edit Category' : 'Add Category'}>
@@ -229,6 +258,18 @@ export default function CategoriesPage() {
                 type="text"
               />
               {fieldErrors.name ? <span style={fieldErrorStyle}>{fieldErrors.name}</span> : null}
+            </label>
+
+            <label style={labelStyle}>
+              Theme (optional)
+              <input
+                placeholder="e.g. Food, Housing, Transportation"
+                value={formState.theme}
+                onChange={(event) => setFormState((current) => ({ ...current, theme: event.target.value }))}
+                style={inputStyle}
+                type="text"
+              />
+              {fieldErrors.theme ? <span style={fieldErrorStyle}>{fieldErrors.theme}</span> : null}
             </label>
 
             <label style={labelStyle}>
@@ -285,6 +326,17 @@ const gridStyle: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
   gap: '1rem',
+}
+
+const themeSectionListStyle: CSSProperties = {
+  display: 'grid',
+  gap: '1.25rem',
+}
+
+const themeHeadingStyle: CSSProperties = {
+  margin: '0 0 0.75rem',
+  color: 'var(--text)',
+  fontSize: '1rem',
 }
 
 const dotStyle: CSSProperties = {

@@ -1,31 +1,26 @@
-import axios from 'axios'
 import { FormEvent, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import client, { tokenStorage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import {
+  authButtonStyle,
+  authCardStyle,
+  authErrorStyle,
+  authFieldErrorStyle,
+  authInputStyle,
+  authLabelStyle,
+  authPageStyle,
+  extractFieldErrors,
+  getFirstFieldError,
+} from '../ui'
 
 type LoginFieldErrors = {
   username: string
   password: string
 }
 
-const emptyFieldErrors: LoginFieldErrors = {
-  username: '',
-  password: '',
-}
-
-const getFirstError = (value: unknown) => {
-  if (typeof value === 'string') {
-    return value
-  }
-
-  if (Array.isArray(value) && typeof value[0] === 'string') {
-    return value[0]
-  }
-
-  return ''
-}
+const emptyFieldErrors: LoginFieldErrors = { username: '', password: '' }
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -48,59 +43,42 @@ export default function LoginPage() {
       await refreshUser()
       navigate('/dashboard')
     } catch (submitError) {
-      console.error(submitError)
-
-      let nextError = 'Unable to log in with those credentials.'
-      const nextFieldErrors = { ...emptyFieldErrors }
-
-      if (axios.isAxiosError(submitError)) {
-        const data = submitError.response?.data
-
-        if (data && typeof data === 'object' && !Array.isArray(data)) {
-          const errorData = data as Record<string, unknown>
-          nextFieldErrors.username = getFirstError(errorData.username)
-          nextFieldErrors.password = getFirstError(errorData.password)
-
-          const detailError = getFirstError(errorData.detail) || getFirstError(errorData.non_field_errors)
-          if (detailError) {
-            nextError = detailError
-          } else if (nextFieldErrors.username || nextFieldErrors.password) {
-            nextError = ''
-          }
-        } else if (!submitError.response) {
-          nextError = 'Unable to reach the server. Please try again.'
-        }
-      }
-
-      setFieldErrors(nextFieldErrors)
-      setError(nextError)
+      const { fieldErrors: apiErrors, generalError } = extractFieldErrors(
+        submitError,
+        'Unable to log in with those credentials.',
+      )
+      setFieldErrors({
+        username: getFirstFieldError(apiErrors.username),
+        password: getFirstFieldError(apiErrors.password),
+      })
+      setError(apiErrors.username || apiErrors.password ? '' : generalError)
     } finally {
       setIsSubmitting(false)
     }
   }
 
   return (
-    <div style={pageStyle}>
-      <form onSubmit={handleSubmit} style={cardStyle}>
+    <div style={authPageStyle}>
+      <form onSubmit={handleSubmit} style={authCardStyle}>
         <h1>Log in</h1>
-        <label style={labelStyle}>
+        <label style={authLabelStyle}>
           Username
-          <input required value={username} onChange={(event) => setUsername(event.target.value)} style={inputStyle} />
-          {fieldErrors.username ? <span style={fieldErrorStyle}>{fieldErrors.username}</span> : null}
+          <input required value={username} onChange={(event) => setUsername(event.target.value)} style={authInputStyle} />
+          {fieldErrors.username ? <span style={authFieldErrorStyle}>{fieldErrors.username}</span> : null}
         </label>
-        <label style={labelStyle}>
+        <label style={authLabelStyle}>
           Password
           <input
             required
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            style={inputStyle}
+            style={authInputStyle}
           />
-          {fieldErrors.password ? <span style={fieldErrorStyle}>{fieldErrors.password}</span> : null}
+          {fieldErrors.password ? <span style={authFieldErrorStyle}>{fieldErrors.password}</span> : null}
         </label>
-        {error ? <p style={errorStyle}>{error}</p> : null}
-        <button type="submit" disabled={isSubmitting} style={buttonStyle}>
+        {error ? <p style={authErrorStyle}>{error}</p> : null}
+        <button type="submit" disabled={isSubmitting} style={authButtonStyle}>
           {isSubmitting ? 'Logging in...' : 'Log In'}
         </button>
         <p>
@@ -109,64 +87,4 @@ export default function LoginPage() {
       </form>
     </div>
   )
-}
-
-const pageStyle = {
-  alignItems: 'center',
-  background: 'var(--bg)',
-  display: 'flex',
-  justifyContent: 'center',
-  minHeight: '100vh',
-}
-
-const cardStyle = {
-  background: 'var(--card-bg)',
-  borderRadius: '12px',
-  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
-  display: 'flex',
-  flexDirection: 'column' as const,
-  gap: '1rem',
-  padding: '2rem',
-  width: '100%',
-  maxWidth: '420px',
-}
-
-const labelStyle = {
-  display: 'flex',
-  flexDirection: 'column' as const,
-  fontWeight: 600,
-  gap: '0.5rem',
-  color: 'var(--text)',
-}
-
-const inputStyle = {
-  border: '1px solid var(--border-input)',
-  borderRadius: '8px',
-  fontSize: '1rem',
-  padding: '0.75rem',
-  background: 'var(--input-bg)',
-  color: 'var(--text)',
-}
-
-const buttonStyle = {
-  background: 'var(--primary)',
-  border: 0,
-  borderRadius: '8px',
-  color: 'var(--invert)',
-  cursor: 'pointer',
-  fontSize: '1rem',
-  fontWeight: 700,
-  padding: '0.75rem 1rem',
-}
-
-const errorStyle = {
-  color: 'var(--error)',
-  margin: 0,
-}
-
-const fieldErrorStyle = {
-  color: 'var(--error)',
-  fontSize: '0.875rem',
-  fontWeight: 400,
-  margin: 0,
 }
