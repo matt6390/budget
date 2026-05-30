@@ -11,6 +11,8 @@ export interface PdfImportSession {
   pdf_file: string
   status: 'pending' | 'extracted' | 'confirmed'
   extracted_data: ExtractedPurchase[]
+  total_amount: string
+  confirmed_purchase_count: number
   created_at: string
   updated_at: string
 }
@@ -77,4 +79,11 @@ export const suggestCategoryBatch = async (
 
 export const deleteImportSession = async (sessionId: number): Promise<void> => {
   await client.delete(`/purchases/import/${sessionId}/`)
+}
+
+export const deleteImportPurchases = async (sessionId: number): Promise<{ deleted_count: number }> => {
+  const response = await client.post<{ deleted_count: number }>(
+    `/purchases/import/${sessionId}/delete-purchases/`,
+  )
+  return response.data
 }

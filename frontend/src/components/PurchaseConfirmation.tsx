@@ -29,6 +29,21 @@ const sortCategoriesByName = (items: Category[]) => {
   return [...items].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+const groupCategoriesByTheme = (items: Category[]) => {
+  const sorted = [...items].sort((a, b) => a.name.localeCompare(b.name))
+  const groups: Record<string, Category[]> = {}
+  for (const cat of sorted) {
+    const key = cat.theme?.trim() || 'Ungrouped'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(cat)
+  }
+  return Object.entries(groups).sort(([a], [b]) => {
+    if (a === 'Ungrouped') return 1
+    if (b === 'Ungrouped') return -1
+    return a.localeCompare(b)
+  })
+}
+
 const applyMerchantCategoryMappings = (
   items: ConfirmPurchaseData[],
   mappings: Record<string, number>,
@@ -388,10 +403,14 @@ export const PurchaseConfirmation: React.FC<PurchaseConfirmationProps> = ({
                       style={{ ...inputStyle, fontSize: '0.85rem', padding: '0.35rem 0.5rem', background: 'var(--input-bg)' }}
                     >
                       <option value="">No category</option>
-                      {categories.map(cat => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </option>
+                      {groupCategoriesByTheme(categories).map(([theme, cats]) => (
+                        <optgroup key={theme} label={theme}>
+                          {cats.map(cat => (
+                            <option key={cat.id} value={cat.id}>
+                              {cat.name}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                     {autoSuggested.has(idx) && (

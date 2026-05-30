@@ -117,11 +117,12 @@ class PurchaseParser:
     """
     Parse extracted PDF text for purchase data (date, merchant, amount).
 
-    Supports two layouts:
-    1. Columnar bank statement (e.g. Chase): dates in one block, merchants in
-       another, amounts at the end — matched positionally.
-    2. Inline receipt/invoice: date, merchant, amount appear on the same line
-       or within a few lines of each other.
+    Parsing strategies (tried in order):
+    1. Per-line: date, merchant, amount all on the same line (e.g. Chase via pypdf).
+    2. Grouped blocks: repeating N-line groups per transaction (e.g. USAA via pypdf).
+    3. Columnar: dates, merchants, and amounts in separate column blocks matched
+       positionally (pdfminer fallback).
+    4. Inline: date and amount extracted from within longer lines (receipts/invoices).
     """
 
     # Exact header/label lines to discard
@@ -137,7 +138,7 @@ class PurchaseParser:
     # Lines whose prefix marks them as non-transaction content
     _SKIP_PREFIX = (
         'Manage your', 'Customer Service', 'Mobile:', 'Download',
-        'www.', '1-800', 'Chase Mobile', 'Page ', 'Statement Date',
+        'www.', '1-800', 'Chase Mobile', 'Page ', 'PAGE ', 'Statement Date',
         'MATTHEW', 'Matthew', 'Account Number',
     )
 
@@ -155,7 +156,7 @@ class PurchaseParser:
 
     # MM/DD date exactly filling a line (bank statement column)
     _DATE_COL_RE = re.compile(r'^\d{2}/\d{2}$')
-    # Amount: optional minus, digits with optional commas, two decimal places
+    # Amount: optional $, optional leading minus, digits/commas, exactly 2 decimal places
     _AMOUNT_RE = re.compile(r'^\$?\s*-?[\d,]+\.\d{2}-?$|^\$?\s*-?\.\d{2}-?$')
     _REFERENCE_TOKEN_RE = re.compile(r'^[A-Z0-9]{10,}$')
     _NON_MERCHANT_EXACT = {
@@ -169,7 +170,22 @@ class PurchaseParser:
         'Fees',
         'Interest Charged',
         'Account Summary',
+        # USAA-specific column headers that pypdf extracts as separate lines
+        'Trans Date',
+        'Post Date',
+        'Amount',
+        'Card',
     }
+
+    # Per-line transaction: MM/DD <merchant> <amount> — all on one line (Chase pypdf)
+    _TRANSACTION_LINE_RE = re.compile(
+        r'^(\d{2}/\d{2})'                   # MM/DD date
+        r'\s+'
+        r'(.+?)'                             # merchant name (non-greedy)
+        r'\s+'
+        r'(\$?\s*-?[\d,]*\.\d{2}-?)'        # amount at end of line
+        r'\s*$'
+    )
 
     # Full-date formats for inline parsing
     _FULL_DATE_PATTERNS = [
@@ -188,11 +204,126 @@ class PurchaseParser:
         self.statement_year = statement_year or self._detect_year()
 
     def parse(self) -> List[Dict[str, Any]]:
-        """Try columnar parse first; fall back to inline parse."""
+        """
+        Try each parsing strategy in order of reliability:
+        1. Per-line  — date + merchant + amount on a single line (Chase/pypdf).
+        2. Grouped   — repeating N-line blocks per transaction (USAA/pypdf).
+        3. Columnar  — positional column matching (pdfminer fallback).
+        4. Inline    — scan lines for embedded dates and amounts.
+        """
+        results = self._parse_per_line()
+        if len(results) >= 3:
+            return results
+        results = self._parse_grouped()
+        if len(results) >= 3:
+            return results
         results = self._parse_columnar()
         if results:
             return results
         return self._parse_inline()
+
+    # ------------------------------------------------------------------
+    # Per-line parse (Chase via pypdf: "MM/DD merchant amount" per line)
+    # ------------------------------------------------------------------
+
+    def _parse_per_line(self) -> List[Dict[str, Any]]:
+        """
+        Handle the layout where every transaction line contains date, merchant,
+        and amount together: "04/03 AMAZON.COM NY 26.00".
+
+        pypdf preserves this row structure for Chase and similar statements.
+        """
+        purchases = []
+        for raw_line in self.lines:
+            line = raw_line.strip()
+            if not line or len(line) < 10:
+                continue
+            m = self._TRANSACTION_LINE_RE.match(line)
+            if not m:
+                continue
+            date_str = self._normalize_mm_dd(m.group(1))
+            if not date_str:
+                continue
+            amount = self._parse_amount(m.group(3))
+            if amount is None or amount <= 0:
+                continue
+            merchant = self._clean_merchant_name(m.group(2))
+            if not merchant:
+                continue
+            purchases.append({'date': date_str, 'merchant': merchant, 'amount': str(amount)})
+        return purchases
+
+    # ------------------------------------------------------------------
+    # Grouped-block parse (USAA via pypdf: repeating N-line blocks)
+    # ------------------------------------------------------------------
+
+    def _parse_grouped(self) -> List[Dict[str, Any]]:
+        """
+        Handle the layout where each transaction is a repeating block of lines:
+          MM/DD  (transaction date)
+          MM/DD  (post date — same day or next day, skipped)
+          REF    (reference token, skipped)
+          Merchant description
+          Amount
+
+        pypdf produces this interleaved format for USAA and similar statements.
+        Also handles 4-line blocks (no reference number) and 3-line blocks.
+        """
+        purchases = []
+        lines = [l.strip() for l in self.lines if l.strip()]
+        i = 0
+        while i < len(lines):
+            if not self._DATE_COL_RE.match(lines[i]):
+                i += 1
+                continue
+
+            # 5-line block: date, post_date, ref, merchant, amount
+            if (i + 4 < len(lines)
+                    and self._DATE_COL_RE.match(lines[i + 1])
+                    and self._REFERENCE_TOKEN_RE.match(lines[i + 2])
+                    and not self._DATE_COL_RE.match(lines[i + 3])
+                    and not self._AMOUNT_RE.match(lines[i + 3])
+                    and self._AMOUNT_RE.match(lines[i + 4])):
+                date_str = self._normalize_mm_dd(lines[i])
+                amount = self._parse_amount(lines[i + 4])
+                if date_str and amount and amount > 0:
+                    merchant = self._clean_merchant_name(lines[i + 3])
+                    if merchant:
+                        purchases.append({'date': date_str, 'merchant': merchant, 'amount': str(amount)})
+                i += 5
+                continue
+
+            # 4-line block: date, post_date, merchant, amount
+            if (i + 3 < len(lines)
+                    and self._DATE_COL_RE.match(lines[i + 1])
+                    and not self._DATE_COL_RE.match(lines[i + 2])
+                    and not self._AMOUNT_RE.match(lines[i + 2])
+                    and self._AMOUNT_RE.match(lines[i + 3])):
+                date_str = self._normalize_mm_dd(lines[i])
+                amount = self._parse_amount(lines[i + 3])
+                if date_str and amount and amount > 0:
+                    merchant = self._clean_merchant_name(lines[i + 2])
+                    if merchant:
+                        purchases.append({'date': date_str, 'merchant': merchant, 'amount': str(amount)})
+                i += 4
+                continue
+
+            # 3-line block: date, merchant, amount
+            if (i + 2 < len(lines)
+                    and not self._DATE_COL_RE.match(lines[i + 1])
+                    and not self._AMOUNT_RE.match(lines[i + 1])
+                    and self._AMOUNT_RE.match(lines[i + 2])):
+                date_str = self._normalize_mm_dd(lines[i])
+                amount = self._parse_amount(lines[i + 2])
+                if date_str and amount and amount > 0:
+                    merchant = self._clean_merchant_name(lines[i + 1])
+                    if merchant:
+                        purchases.append({'date': date_str, 'merchant': merchant, 'amount': str(amount)})
+                i += 3
+                continue
+
+            i += 1
+        return purchases
 
     # ------------------------------------------------------------------
     # Columnar parse (bank statements: Chase, BofA, etc.)
@@ -453,32 +584,57 @@ def extract_purchases_from_pdf(
 
     Returns:
         List of dicts: [{date: 'YYYY-MM-DD', merchant: str, amount: str}, ...]
+
+    Strategy:
+        1. pypdf extraction — preserves row/block structure; best for Chase
+           (per-line) and USAA (grouped 5-line blocks).
+        2. pdfminer per-page extraction — columnar fallback for PDFs where
+           pypdf does not produce parseable output.
+        3. pdfminer full-text extraction — last resort.
     """
     extractor = PdfExtractor(pdf_content)
+    zero_indexed = [p - 1 for p in page_numbers] if page_numbers else None
 
-    if page_numbers:
+    # --- Strategy 1: pypdf (row-preserving) ---
+    pypdf_text = extractor._extract_with_pypdf(zero_indexed)
+    if pypdf_text.strip():
+        results = PurchaseParser(pypdf_text).parse()
+        if len(results) >= 3:
+            return _dedup_purchases(results)
+
+    # --- Strategy 2: pdfminer per-page ---
+    if not page_numbers:
+        page_count = extractor.get_page_count()
+        if page_count > 1:
+            purchases: List[Dict[str, Any]] = []
+            seen: Set[Tuple[str, str, str]] = set()
+            for page_num in range(1, page_count + 1):
+                page_text = extractor.extract_text_from_pages([page_num])
+                for p in PurchaseParser(page_text).parse():
+                    key = (p['date'], p['merchant'], p['amount'])
+                    if key not in seen:
+                        seen.add(key)
+                        purchases.append(p)
+            if purchases:
+                return purchases
+    else:
         text = extractor.extract_text_from_pages(page_numbers)
-        parser = PurchaseParser(text)
-        return parser.parse()
+        results = PurchaseParser(text).parse()
+        if results:
+            return results
 
-    # Default path: parse per-page first so mixed-content pages do not suppress
-    # extraction from transaction pages (e.g., statement cover + transaction page).
-    page_count = extractor.get_page_count()
-    if page_count > 1:
-        purchases: List[Dict[str, Any]] = []
-        seen: Set[Tuple[str, str, str]] = set()
-        for page_num in range(1, page_count + 1):
-            page_text = extractor.extract_text_from_pages([page_num])
-            parsed = PurchaseParser(page_text).parse()
-            for purchase in parsed:
-                key = (purchase['date'], purchase['merchant'], purchase['amount'])
-                if key in seen:
-                    continue
-                seen.add(key)
-                purchases.append(purchase)
-        if purchases:
-            return purchases
-
-    # Fallback to combined-text parsing.
+    # --- Strategy 3: pdfminer full-text ---
     text = extractor.extract_text()
     return PurchaseParser(text).parse()
+
+
+def _dedup_purchases(purchases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove duplicate transactions by (date, merchant, amount) key."""
+    seen: Set[Tuple[str, str, str]] = set()
+    result: List[Dict[str, Any]] = []
+    for p in purchases:
+        key = (p['date'], p['merchant'], p['amount'])
+        if key not in seen:
+            seen.add(key)
+            result.append(p)
+    return result

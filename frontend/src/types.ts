@@ -1,11 +1,28 @@
 export type User = { id: number; username: string; email: string }
 
+export type CategoryTheme = {
+  id: number
+  name: string
+  monthly_budget: string | null
+  active_amount: string
+  created_at: string
+}
+
 export type Category = {
   id: number
   name: string
   theme: string | null
   color: string
   monthly_budget: string | null
+  created_at: string
+}
+
+export type IncomeSalaryChange = {
+  id: number
+  income_source: number
+  effective_date: string
+  amount: string
+  note: string
   created_at: string
 }
 
@@ -16,6 +33,7 @@ export type IncomeSource = {
   cadence: string
   is_active: boolean
   monthly_equivalent: string
+  salary_history: IncomeSalaryChange[]
   created_at: string
 }
 

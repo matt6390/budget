@@ -25,10 +25,13 @@ import {
   formatCurrency,
   formatMonthLabel,
   getCurrentMonth,
+  monthNavButtonStyle,
   mutedTextStyle,
   pageTitleStyle,
   shiftMonth,
 } from '../ui'
+
+type ChartType = 'donut' | 'pie' | 'bar'
 
 const CHART_COLORS = [
   '#818cf8', '#34d399', '#fb923c', '#f472b6',
@@ -44,12 +47,28 @@ function buildMonthRange(endMonth: string, count: number): string[] {
 }
 
 export default function ReportsPage() {
+  const [endMonth, setEndMonth] = useState(getCurrentMonth())
+  const [rangeMonths, setRangeMonths] = useState<3 | 6 | 12>(6)
+  const [categoryMonth, setCategoryMonth] = useState(getCurrentMonth())
+  const [categoryChartType, setCategoryChartType] = useState<ChartType>('donut')
   const [summaries, setSummaries] = useState<BudgetSummary[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const currentMonth = getCurrentMonth()
-  const months = useMemo(() => buildMonthRange(currentMonth, 6), [currentMonth])
+  const months = useMemo(() => buildMonthRange(endMonth, rangeMonths), [endMonth, rangeMonths])
+  const isCurrentEndMonth = endMonth === getCurrentMonth()
+
+  const handleSetEndMonth = (newEnd: string) => {
+    setEndMonth(newEnd)
+    setCategoryMonth(newEnd)
+  }
+
+  const handleSetRangeMonths = (n: 3 | 6 | 12) => {
+    setRangeMonths(n)
+    if (!buildMonthRange(endMonth, n).includes(categoryMonth)) {
+      setCategoryMonth(endMonth)
+    }
+  }
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -69,11 +88,10 @@ export default function ReportsPage() {
     void fetchAll()
   }, [months])
 
-  // --- Trend data: 6 months of income / expenses / spending ---
   const trendData = useMemo(
     () =>
       summaries.map((s) => ({
-        month: formatMonthLabel(s.month).replace(/\s\d{4}$/, ''), // "January" not "January 2026"
+        month: formatMonthLabel(s.month).replace(/\s\d{4}$/, ''),
         Income: parseFloat(s.monthly_income),
         Expenses: parseFloat(s.monthly_expenses),
         Spending: parseFloat(s.spending_this_month),
@@ -82,17 +100,13 @@ export default function ReportsPage() {
     [summaries],
   )
 
-  // --- Pie: aggregate spending by category for the latest month ---
-  const latestSummary = summaries[summaries.length - 1]
-  const pieData = useMemo(
-    () =>
-      (latestSummary?.spending_by_category ?? [])
-        .filter((item) => parseFloat(item.total) > 0)
-        .map((item) => ({ name: item.category_name, value: parseFloat(item.total), color: item.color })),
-    [latestSummary],
-  )
+  const categoryData = useMemo(() => {
+    const s = summaries.find((s) => s.month === categoryMonth)
+    return (s?.spending_by_category ?? [])
+      .filter((item) => parseFloat(item.total) > 0)
+      .map((item) => ({ name: item.category_name, value: parseFloat(item.total), color: item.color }))
+  }, [summaries, categoryMonth])
 
-  // --- Bar: net budget per month ---
   const netData = useMemo(
     () =>
       summaries.map((s) => ({
@@ -103,13 +117,50 @@ export default function ReportsPage() {
   )
 
   const hasAnyData = trendData.some((d) => d.Income > 0 || d.Expenses > 0 || d.Spending > 0)
-  const latestMonthLabel = latestSummary ? formatMonthLabel(latestSummary.month) : ''
+
+  const categoryMonthIndex = months.indexOf(categoryMonth)
+  const canCategoryPrev = categoryMonthIndex > 0
+  const canCategoryNext = categoryMonthIndex < months.length - 1
 
   return (
     <div>
-      <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ marginBottom: '1rem' }}>
         <h1 style={pageTitleStyle}>Reports</h1>
-        <p style={mutedTextStyle}>Visual breakdown of your finances over the last 6 months.</p>
+        <p style={mutedTextStyle}>Visual breakdown of your finances.</p>
+      </div>
+
+      {/* ── Range controls ── */}
+      <div style={controlsRowStyle}>
+        <div style={rangeNavStyle}>
+          <button
+            onClick={() => handleSetEndMonth(shiftMonth(endMonth, -1))}
+            style={monthNavButtonStyle}
+            type="button"
+          >
+            ←
+          </button>
+          <span style={{ fontWeight: 600 }}>{formatMonthLabel(endMonth)}</span>
+          <button
+            disabled={isCurrentEndMonth}
+            onClick={() => handleSetEndMonth(shiftMonth(endMonth, 1))}
+            style={{ ...monthNavButtonStyle, opacity: isCurrentEndMonth ? 0.5 : 1 }}
+            type="button"
+          >
+            →
+          </button>
+        </div>
+        <div style={toggleGroupStyle}>
+          {([3, 6, 12] as const).map((n) => (
+            <button
+              key={n}
+              onClick={() => handleSetRangeMonths(n)}
+              style={rangeMonths === n ? activeToggleBtnStyle : toggleBtnStyle}
+              type="button"
+            >
+              {n} mo
+            </button>
+          ))}
+        </div>
       </div>
 
       {error ? <p style={{ ...errorTextStyle, marginBottom: '1.5rem' }}>{error}</p> : null}
@@ -129,7 +180,7 @@ export default function ReportsPage() {
 
           {/* ── Area chart: income / expenses / spending trend ── */}
           <section style={{ ...cardStyle, gridColumn: 'span 2' }}>
-            <h2 style={chartTitleStyle}>6-Month Trend — Income vs Expenses vs Spending</h2>
+            <h2 style={chartTitleStyle}>{rangeMonths}-Month Trend — Income vs Expenses vs Spending</h2>
             <div style={chartWrapStyle}>
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={trendData} margin={{ top: 8, right: 24, bottom: 0, left: 8 }}>
@@ -160,31 +211,86 @@ export default function ReportsPage() {
             </div>
           </section>
 
-          {/* ── Pie chart: category breakdown for current month ── */}
+          {/* ── Category breakdown chart with month picker + type toggle ── */}
           <section style={cardStyle}>
-            <h2 style={chartTitleStyle}>
-              {latestMonthLabel} — Spending by Category
-            </h2>
-            {pieData.length === 0 ? (
+            <div style={chartCardHeaderStyle}>
+              <div style={categoryNavRowStyle}>
+                <button
+                  disabled={!canCategoryPrev}
+                  onClick={() => setCategoryMonth(months[categoryMonthIndex - 1])}
+                  style={{ ...monthNavButtonStyle, opacity: canCategoryPrev ? 1 : 0.4 }}
+                  type="button"
+                >
+                  ←
+                </button>
+                <h2 style={{ ...chartTitleStyle, margin: 0 }}>{formatMonthLabel(categoryMonth)} — Spending</h2>
+                <button
+                  disabled={!canCategoryNext}
+                  onClick={() => setCategoryMonth(months[categoryMonthIndex + 1])}
+                  style={{ ...monthNavButtonStyle, opacity: canCategoryNext ? 1 : 0.4 }}
+                  type="button"
+                >
+                  →
+                </button>
+              </div>
+              <div style={toggleGroupStyle}>
+                {(['donut', 'pie', 'bar'] as ChartType[]).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setCategoryChartType(t)}
+                    style={categoryChartType === t ? activeToggleBtnStyle : toggleBtnStyle}
+                    type="button"
+                  >
+                    {t === 'donut' ? '◎' : t === 'pie' ? '●' : '▬'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {categoryData.length === 0 ? (
               <p style={emptyStateStyle}>No purchases recorded this month.</p>
+            ) : categoryChartType === 'bar' ? (
+              <div style={{ ...chartWrapStyle, height: 300 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={categoryData} margin={{ top: 8, right: 8, bottom: 64, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fill: 'var(--muted)', fontSize: 11 }}
+                      angle={-35}
+                      textAnchor="end"
+                      interval={0}
+                    />
+                    <YAxis tickFormatter={(v: number) => `$${v}`} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                    <Tooltip formatter={(v: number | string) => formatCurrency(v)} />
+                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                      {categoryData.map((entry, i) => (
+                        <Cell
+                          key={entry.name}
+                          fill={entry.color && entry.color !== '#808080' ? entry.color : CHART_COLORS[i % CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             ) : (
               <div style={chartWrapStyle}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={pieData}
+                      data={categoryData}
                       dataKey="value"
                       nameKey="name"
                       cx="50%"
-                      cy="45%"
+                      cy="50%"
                       outerRadius="65%"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      labelLine={true}
+                      innerRadius={categoryChartType === 'donut' ? '35%' : 0}
                     >
-                      {pieData.map((entry, index) => (
+                      {categoryData.map((entry, i) => (
                         <Cell
                           key={entry.name}
-                          fill={entry.color && entry.color !== '#808080' ? entry.color : CHART_COLORS[index % CHART_COLORS.length]}
+                          fill={entry.color && entry.color !== '#808080' ? entry.color : CHART_COLORS[i % CHART_COLORS.length]}
                         />
                       ))}
                     </Pie>
@@ -244,10 +350,63 @@ export default function ReportsPage() {
   )
 }
 
+const controlsRowStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: '0.75rem',
+  marginBottom: '1.5rem',
+}
+
+const rangeNavStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.75rem',
+}
+
+const toggleGroupStyle: CSSProperties = {
+  display: 'flex',
+  gap: '0.35rem',
+}
+
+const toggleBtnStyle: CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  color: 'var(--muted)',
+  cursor: 'pointer',
+  fontSize: '0.8rem',
+  padding: '0.3rem 0.65rem',
+}
+
+const activeToggleBtnStyle: CSSProperties = {
+  ...toggleBtnStyle,
+  background: 'var(--primary)',
+  borderColor: 'var(--primary)',
+  color: 'var(--invert)',
+  fontWeight: 700,
+}
+
 const gridStyle: CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(2, 1fr)',
   gap: '1.5rem',
+}
+
+const chartCardHeaderStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: '0.5rem',
+  marginBottom: '1rem',
+}
+
+const categoryNavRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.5rem',
 }
 
 const chartTitleStyle: CSSProperties = {

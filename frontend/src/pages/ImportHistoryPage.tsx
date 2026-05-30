@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import client from '../api/client'
-import { deleteImportSession, type PdfImportSession } from '../api/pdfImport'
+import { deleteImportSession, deleteImportPurchases, type PdfImportSession } from '../api/pdfImport'
 import {
   COLORS,
   btnPrimaryStyle,
@@ -22,12 +22,18 @@ const STATUS_LABELS: Record<string, { label: string; bg: string; color: string }
   confirmed: { label: 'Saved', bg: '#d1fae5', color: '#065f46' },
 }
 
+const formatCurrency = (value: string | number) => {
+  const n = typeof value === 'string' ? parseFloat(value) : value
+  return isNaN(n) ? '—' : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 export default function ImportHistoryPage() {
   const [sessions, setSessions] = useState<PdfImportSession[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
   const [viewingPdf, setViewingPdf] = useState<number | null>(null)
   const [deletingSessionId, setDeletingSessionId] = useState<number | null>(null)
+  const [deletingPurchasesId, setDeletingPurchasesId] = useState<number | null>(null)
 
   useEffect(() => {
     const fetch = async () => {
@@ -60,7 +66,7 @@ export default function ImportHistoryPage() {
   }
 
   const handleDeleteImport = async (sessionId: number) => {
-    if (!window.confirm('Delete this import and its uploaded PDF?')) return
+    if (!window.confirm('Delete this import and its uploaded PDF? This will NOT remove any already-saved purchases.')) return
     setDeletingSessionId(sessionId)
     setError('')
     try {
@@ -70,6 +76,22 @@ export default function ImportHistoryPage() {
       setError('Could not delete this import.')
     } finally {
       setDeletingSessionId(null)
+    }
+  }
+
+  const handleDeletePurchases = async (sessionId: number, count: number) => {
+    if (!window.confirm(`Delete all ${count} purchase${count !== 1 ? 's' : ''} from this import? The session will return to "Awaiting Review" so you can re-import.`)) return
+    setDeletingPurchasesId(sessionId)
+    setError('')
+    try {
+      await deleteImportPurchases(sessionId)
+      setSessions(prev =>
+        prev.map(s => s.id === sessionId ? { ...s, status: 'extracted' as const, confirmed_purchase_count: 0 } : s)
+      )
+    } catch {
+      setError('Could not delete purchases for this import.')
+    } finally {
+      setDeletingPurchasesId(null)
     }
   }
 
@@ -102,16 +124,18 @@ export default function ImportHistoryPage() {
                   <th style={tableHeaderCellStyle}>File</th>
                   <th style={tableHeaderCellStyle}>Date</th>
                   <th style={tableHeaderCellStyle}>Status</th>
-                  <th style={tableHeaderCellStyle}>Purchases</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: 'center' }}>Purchases</th>
+                  <th style={{ ...tableHeaderCellStyle, textAlign: 'right' }}>Total</th>
                   <th style={tableHeaderCellStyle}></th>
                 </tr>
               </thead>
               <tbody>
                 {sessions.map((session) => {
                   const badge = STATUS_LABELS[session.status] ?? STATUS_LABELS.pending
-                  const count = session.extracted_data?.length ?? 0
+                  const count = session.confirmed_purchase_count ?? session.extracted_data?.length ?? 0
                   const isLoadingPdf = viewingPdf === session.id
                   const isDeleting = deletingSessionId === session.id
+                  const isDeletingPurchases = deletingPurchasesId === session.id
                   return (
                     <tr key={session.id}>
                       <td style={{ ...tableCellStyle, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -126,13 +150,16 @@ export default function ImportHistoryPage() {
                         </span>
                       </td>
                       <td style={{ ...tableCellStyle, textAlign: 'center' }}>
-                        {session.extracted_data ? `${count}` : '—'}
+                        {count}
+                      </td>
+                      <td style={{ ...tableCellStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        {session.total_amount ? formatCurrency(session.total_amount) : '—'}
                       </td>
                       <td style={{ ...tableCellStyle, textAlign: 'right' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
                           {session.pdf_file && (
                             <button
-                              onClick={() => handleViewPdf(session.id)}
+                              onClick={() => void handleViewPdf(session.id)}
                               disabled={isLoadingPdf}
                               style={viewPdfBtnStyle}
                             >
@@ -146,6 +173,15 @@ export default function ImportHistoryPage() {
                             >
                               Review →
                             </Link>
+                          )}
+                          {session.status === 'confirmed' && (
+                            <button
+                              onClick={() => void handleDeletePurchases(session.id, count)}
+                              disabled={isDeletingPurchases}
+                              style={deletePurchasesBtnStyle}
+                            >
+                              {isDeletingPurchases ? 'Removing…' : '↩ Re-import'}
+                            </button>
                           )}
                           <button
                             onClick={() => void handleDeleteImport(session.id)}
@@ -187,6 +223,17 @@ const viewPdfBtnStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
+const deletePurchasesBtnStyle: CSSProperties = {
+  background: 'transparent',
+  border: '1px solid var(--warning, #d97706)',
+  borderRadius: '6px',
+  padding: '0.25rem 0.6rem',
+  fontSize: '0.8rem',
+  cursor: 'pointer',
+  color: 'var(--warning, #d97706)',
+  whiteSpace: 'nowrap',
+}
+
 const deleteBtnStyle: CSSProperties = {
   background: 'transparent',
   border: '1px solid var(--error)',
@@ -197,3 +244,4 @@ const deleteBtnStyle: CSSProperties = {
   color: 'var(--error)',
   whiteSpace: 'nowrap',
 }
+

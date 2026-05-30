@@ -1,7 +1,34 @@
 from decimal import Decimal
+from django.db.models import Sum
 from rest_framework import serializers
 
-from .models import Category, IncomeSource, Loan, Purchase, RecurringExpense, SavingsContribution, SavingsGoal
+from .models import (
+    Category,
+    CategoryTheme,
+    IncomeSource,
+    IncomeSalaryChange,
+    Loan,
+    Purchase,
+    RecurringExpense,
+    SavingsContribution,
+    SavingsGoal,
+    quantize_currency,
+)
+
+
+class CategoryThemeSerializer(serializers.ModelSerializer):
+    active_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CategoryTheme
+        fields = ['id', 'name', 'monthly_budget', 'active_amount', 'created_at']
+        read_only_fields = ['id', 'user', 'active_amount', 'created_at']
+
+    def get_active_amount(self, obj) -> str:
+        total = Category.objects.filter(user=obj.user, theme=obj.name).aggregate(
+            total=Sum('monthly_budget')
+        )['total']
+        return f'{quantize_currency(total or Decimal("0")):.2f}'
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -11,13 +38,21 @@ class CategorySerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user', 'created_at']
 
 
+class IncomeSalaryChangeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomeSalaryChange
+        fields = ['id', 'income_source', 'effective_date', 'amount', 'note', 'created_at']
+        read_only_fields = ['id', 'income_source', 'created_at']
+
+
 class IncomeSourceSerializer(serializers.ModelSerializer):
     monthly_equivalent = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    salary_history = IncomeSalaryChangeSerializer(many=True, read_only=True)
 
     class Meta:
         model = IncomeSource
         fields = '__all__'
-        read_only_fields = ['id', 'user', 'created_at', 'monthly_equivalent']
+        read_only_fields = ['id', 'user', 'created_at', 'monthly_equivalent', 'salary_history']
 
 
 class RecurringExpenseSerializer(serializers.ModelSerializer):

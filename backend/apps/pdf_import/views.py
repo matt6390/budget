@@ -122,6 +122,7 @@ class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
                 purchase = Purchase.objects.create(
                     user=request.user,
                     category=category,
+                    import_session=session,
                     description=merchant_name,
                     amount=purchase_data['amount'],
                     date=purchase_data['date'],
@@ -157,6 +158,20 @@ class PdfImportSessionViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
             'created_purchases': created_purchases,
             'count': len(created_purchases),
         }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='delete-purchases')
+    def delete_purchases(self, request, pk=None):
+        """Delete all purchases linked to this import session and reset status to extracted."""
+        session = self.get_object()
+        if session.status != 'confirmed':
+            return Response(
+                {'error': 'Only confirmed sessions have purchases to delete'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted_count, _ = session.purchases.all().delete()
+        session.status = 'extracted'
+        session.save()
+        return Response({'deleted_count': deleted_count}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='pdf')
     def serve_pdf(self, request, pk=None):

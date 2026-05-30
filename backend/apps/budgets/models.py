@@ -37,6 +37,19 @@ class Category(models.Model):
         return self.name
 
 
+class CategoryTheme(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    name = models.CharField(max_length=100)
+    monthly_budget = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [['user', 'name']]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class IncomeSource(models.Model):
     CADENCE_CHOICES = [
         ('monthly', 'Monthly'),
@@ -61,6 +74,21 @@ class IncomeSource(models.Model):
         return self.name
 
 
+class IncomeSalaryChange(models.Model):
+    """Records a salary change for an income source, effective from a given date."""
+    income_source = models.ForeignKey(IncomeSource, on_delete=models.CASCADE, related_name='salary_history')
+    effective_date = models.DateField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    note = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-effective_date', '-created_at']
+
+    def __str__(self) -> str:
+        return f'{self.income_source.name} → {self.amount} from {self.effective_date}'
+
+
 class RecurringExpense(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
@@ -77,6 +105,13 @@ class RecurringExpense(models.Model):
 class Purchase(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
+    import_session = models.ForeignKey(
+        'pdf_import.PdfImportSession',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='purchases',
+    )
     description = models.CharField(max_length=200)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     date = models.DateField()

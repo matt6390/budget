@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent } from 'react'
 
 import client from '../api/client'
 import Modal from '../components/Modal'
-import type { BudgetSummary, Category } from '../types'
+import type { BudgetSummary, Category, CategoryTheme } from '../types'
 import {
   COLORS,
   actionsRowStyle,
@@ -33,24 +33,45 @@ type CategoryFormState = {
   monthly_budget: string
 }
 
-const defaultFormState: CategoryFormState = {
+type ThemeFormState = {
+  name: string
+  monthly_budget: string
+}
+
+const defaultCategoryForm: CategoryFormState = {
   name: '',
   theme: '',
   color: '#6366f1',
   monthly_budget: '',
 }
 
+const defaultThemeForm: ThemeFormState = {
+  name: '',
+  monthly_budget: '',
+}
+
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([])
+  const [themes, setThemes] = useState<CategoryTheme[]>([])
   const [spendingMap, setSpendingMap] = useState<Record<number, number>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState('')
-  const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // Category modal
+  const [isCatModalOpen, setIsCatModalOpen] = useState(false)
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
-  const [formState, setFormState] = useState<CategoryFormState>(defaultFormState)
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
-  const [generalError, setGeneralError] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [catForm, setCatForm] = useState<CategoryFormState>(defaultCategoryForm)
+  const [catFieldErrors, setCatFieldErrors] = useState<FieldErrors>({})
+  const [catGeneralError, setCatGeneralError] = useState('')
+  const [catSubmitting, setCatSubmitting] = useState(false)
+
+  // Theme modal
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false)
+  const [editingTheme, setEditingTheme] = useState<CategoryTheme | null>(null)
+  const [themeForm, setThemeForm] = useState<ThemeFormState>(defaultThemeForm)
+  const [themeFieldErrors, setThemeFieldErrors] = useState<FieldErrors>({})
+  const [themeGeneralError, setThemeGeneralError] = useState('')
+  const [themeSubmitting, setThemeSubmitting] = useState(false)
 
   const currentMonth = getCurrentMonth()
 
@@ -58,12 +79,13 @@ export default function CategoriesPage() {
     setIsLoading(true)
     setError('')
     try {
-      const [catRes, summaryRes] = await Promise.all([
+      const [catRes, themeRes, summaryRes] = await Promise.all([
         client.get<Category[]>('/budget/categories/'),
+        client.get<CategoryTheme[]>('/budget/themes/'),
         client.get<BudgetSummary>(`/budget/summary/?month=${currentMonth}`),
       ])
       setCategories(catRes.data)
-      // Build a map of category_id → total spent this month
+      setThemes(themeRes.data)
       const map: Record<number, number> = {}
       for (const entry of summaryRes.data.spending_by_category) {
         if (entry.category_id !== null) {
@@ -82,71 +104,67 @@ export default function CategoriesPage() {
     void fetchData()
   }, [])
 
-  const closeModal = () => {
-    setIsModalOpen(false)
+  // ── Category modal helpers ──────────────────────────────────────────────────
+  const closeCatModal = () => {
+    setIsCatModalOpen(false)
     setEditingCategory(null)
-    setFormState(defaultFormState)
-    setFieldErrors({})
-    setGeneralError('')
-    setIsSubmitting(false)
+    setCatForm(defaultCategoryForm)
+    setCatFieldErrors({})
+    setCatGeneralError('')
+    setCatSubmitting(false)
   }
 
-  const openAddModal = () => {
+  const openAddCatModal = () => {
     setEditingCategory(null)
-    setFormState(defaultFormState)
-    setFieldErrors({})
-    setGeneralError('')
-    setIsModalOpen(true)
+    setCatForm(defaultCategoryForm)
+    setCatFieldErrors({})
+    setCatGeneralError('')
+    setIsCatModalOpen(true)
   }
 
-  const openEditModal = (category: Category) => {
+  const openEditCatModal = (category: Category) => {
     setEditingCategory(category)
-    setFormState({
+    setCatForm({
       name: category.name,
       theme: category.theme ?? '',
       color: category.color,
       monthly_budget: category.monthly_budget ?? '',
     })
-    setFieldErrors({})
-    setGeneralError('')
-    setIsModalOpen(true)
+    setCatFieldErrors({})
+    setCatGeneralError('')
+    setIsCatModalOpen(true)
   }
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleCatSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setIsSubmitting(true)
-    setFieldErrors({})
-    setGeneralError('')
-
+    setCatSubmitting(true)
+    setCatFieldErrors({})
+    setCatGeneralError('')
     try {
       const payload = {
-        name: formState.name,
-        theme: formState.theme.trim() !== '' ? formState.theme.trim() : null,
-        color: formState.color,
-        monthly_budget: formState.monthly_budget !== '' ? formState.monthly_budget : null,
+        name: catForm.name,
+        theme: catForm.theme.trim() !== '' ? catForm.theme.trim() : null,
+        color: catForm.color,
+        monthly_budget: catForm.monthly_budget !== '' ? catForm.monthly_budget : null,
       }
       if (editingCategory) {
         await client.patch(`/budget/categories/${editingCategory.id}/`, payload)
       } else {
         await client.post('/budget/categories/', payload)
       }
-
       await fetchData()
-      closeModal()
+      closeCatModal()
     } catch (err) {
       const { fieldErrors: nextErrors, generalError: nextError } = extractFieldErrors(err)
-      setFieldErrors(nextErrors)
-      setGeneralError(nextError)
+      setCatFieldErrors(nextErrors)
+      setCatGeneralError(nextError)
     } finally {
-      setIsSubmitting(false)
+      setCatSubmitting(false)
     }
   }
 
-  const handleDelete = async (category: Category) => {
-    if (!window.confirm(`Delete category “${category.name}”?`)) {
-      return
-    }
-
+  const handleDeleteCat = async (category: Category) => {
+    if (!window.confirm(`Delete category "${category.name}"?`)) return
     try {
       await client.delete(`/budget/categories/${category.id}/`)
       await fetchData()
@@ -155,14 +173,78 @@ export default function CategoriesPage() {
     }
   }
 
+  // ── Theme modal helpers ─────────────────────────────────────────────────────
+  const closeThemeModal = () => {
+    setIsThemeModalOpen(false)
+    setEditingTheme(null)
+    setThemeForm(defaultThemeForm)
+    setThemeFieldErrors({})
+    setThemeGeneralError('')
+    setThemeSubmitting(false)
+  }
+
+  const openAddThemeModal = () => {
+    setEditingTheme(null)
+    setThemeForm(defaultThemeForm)
+    setThemeFieldErrors({})
+    setThemeGeneralError('')
+    setIsThemeModalOpen(true)
+  }
+
+  const openEditThemeModal = (theme: CategoryTheme) => {
+    setEditingTheme(theme)
+    setThemeForm({ name: theme.name, monthly_budget: theme.monthly_budget ?? '' })
+    setThemeFieldErrors({})
+    setThemeGeneralError('')
+    setIsThemeModalOpen(true)
+  }
+
+  const handleThemeSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setThemeSubmitting(true)
+    setThemeFieldErrors({})
+    setThemeGeneralError('')
+    try {
+      const payload = {
+        name: themeForm.name.trim(),
+        monthly_budget: themeForm.monthly_budget !== '' ? themeForm.monthly_budget : null,
+      }
+      if (editingTheme) {
+        await client.patch(`/budget/themes/${editingTheme.id}/`, payload)
+      } else {
+        await client.post('/budget/themes/', payload)
+      }
+      await fetchData()
+      closeThemeModal()
+    } catch (err) {
+      const { fieldErrors: nextErrors, generalError: nextError } = extractFieldErrors(err)
+      setThemeFieldErrors(nextErrors)
+      setThemeGeneralError(nextError)
+    } finally {
+      setThemeSubmitting(false)
+    }
+  }
+
+  const handleDeleteTheme = async (theme: CategoryTheme) => {
+    if (!window.confirm(`Delete theme "${theme.name}"? Categories in this theme will become ungrouped.`)) return
+    try {
+      await client.delete(`/budget/themes/${theme.id}/`)
+      await fetchData()
+    } catch {
+      setError('Unable to delete that theme right now.')
+    }
+  }
+
+  // ── Build grouped view ──────────────────────────────────────────────────────
+  const themeMap = Object.fromEntries(themes.map((t) => [t.name, t]))
+
   const groupedCategories = categories.reduce<Record<string, Category[]>>((groups, category) => {
     const key = category.theme?.trim() ? category.theme.trim() : 'Ungrouped'
-    if (!groups[key]) {
-      groups[key] = []
-    }
+    if (!groups[key]) groups[key] = []
     groups[key].push(category)
     return groups
   }, {})
+
   const themeNames = Object.keys(groupedCategories).sort((a, b) => {
     if (a === 'Ungrouped') return 1
     if (b === 'Ungrouped') return -1
@@ -176,9 +258,14 @@ export default function CategoriesPage() {
           <h1 style={pageTitleStyle}>Categories</h1>
           <p style={{ color: COLORS.muted, margin: 0 }}>Organize purchases and expenses with reusable labels.</p>
         </div>
-        <button onClick={openAddModal} style={btnPrimaryStyle} type="button">
-          Add Category
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button onClick={openAddThemeModal} style={btnGhostStyle} type="button">
+            + Add Theme
+          </button>
+          <button onClick={openAddCatModal} style={btnPrimaryStyle} type="button">
+            Add Category
+          </button>
+        </div>
       </div>
 
       {error ? <p style={{ ...errorTextStyle, marginBottom: '1rem' }}>{error}</p> : null}
@@ -192,128 +279,218 @@ export default function CategoriesPage() {
         </section>
       ) : (
         <div style={themeSectionListStyle}>
-          {themeNames.map((themeName) => (
-            <section key={themeName}>
-              <h2 style={themeHeadingStyle}>{themeName}</h2>
-              <div style={gridStyle}>
-                {groupedCategories[themeName].map((category) => {
-                  const budget = category.monthly_budget ? parseFloat(category.monthly_budget) : null
-                  const spent = spendingMap[category.id] ?? 0
-                  const pct = budget && budget > 0 ? Math.min((spent / budget) * 100, 100) : 0
-                  const overBudget = budget !== null && spent > budget
-                  const nearBudget = budget !== null && !overBudget && pct >= 75
-                  const barColor = overBudget ? 'var(--error)' : nearBudget ? '#f59e0b' : 'var(--primary)'
-                  return (
-                    <article key={category.id} style={cardStyle}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
-                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                          <span style={{ ...dotStyle, background: category.color }} />
-                          <div>
-                            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h3>
-                            {budget ? (
-                              <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
-                                Budget: {formatCurrency(budget)}
-                                {overBudget && <span style={{ color: 'var(--error)', marginLeft: '0.4rem', fontWeight: 600 }}>⚠️ Over budget</span>}
-                              </p>
-                            ) : (
-                              <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>No budget set</p>
-                            )}
+          {themeNames.map((themeName) => {
+            const themeRecord = themeName !== 'Ungrouped' ? themeMap[themeName] : null
+            const themeBudget = themeRecord?.monthly_budget ? parseFloat(themeRecord.monthly_budget) : null
+            const themeActiveAmount = themeRecord ? parseFloat(themeRecord.active_amount) : null
+
+            return (
+              <section key={themeName}>
+                <div style={themeHeaderStyle}>
+                  <div>
+                    <h2 style={themeHeadingStyle}>{themeName}</h2>
+                    {themeRecord && (
+                      <p style={{ margin: 0, fontSize: '0.82rem', color: COLORS.muted }}>
+                        {themeBudget !== null
+                          ? <>Theme budget: <strong>{formatCurrency(themeBudget)}</strong> &nbsp;·&nbsp; Active: <strong>{formatCurrency(themeActiveAmount ?? 0)}</strong></>
+                          : <>Active: <strong>{formatCurrency(themeActiveAmount ?? 0)}</strong> — no theme budget set</>
+                        }
+                      </p>
+                    )}
+                  </div>
+                  {themeRecord ? (
+                    <div style={actionsRowStyle}>
+                      <button onClick={() => openEditThemeModal(themeRecord)} style={btnGhostStyle} type="button" title="Edit theme">✏️</button>
+                      <button onClick={() => void handleDeleteTheme(themeRecord)} style={btnDangerStyle} type="button" title="Delete theme">🗑️</button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {themeBudget !== null && themeActiveAmount !== null && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
+                      <span>Category budgets allocated</span>
+                      <span>{Math.round(Math.min((themeActiveAmount / themeBudget) * 100, 100))}% of {formatCurrency(themeBudget)}</span>
+                    </div>
+                    <div style={{ height: '5px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${Math.min((themeActiveAmount / themeBudget) * 100, 100)}%`,
+                        background: themeActiveAmount > themeBudget ? 'var(--error)' : 'var(--primary)',
+                        borderRadius: '999px',
+                        transition: 'width 0.3s',
+                      }} />
+                    </div>
+                  </div>
+                )}
+
+                <div style={gridStyle}>
+                  {groupedCategories[themeName].map((category) => {
+                    const budget = category.monthly_budget ? parseFloat(category.monthly_budget) : null
+                    const spent = spendingMap[category.id] ?? 0
+                    const pct = budget && budget > 0 ? Math.min((spent / budget) * 100, 100) : 0
+                    const overBudget = budget !== null && spent > budget
+                    const nearBudget = budget !== null && !overBudget && pct >= 75
+                    const barColor = overBudget ? 'var(--error)' : nearBudget ? '#f59e0b' : 'var(--primary)'
+                    return (
+                      <article key={category.id} style={cardStyle}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                            <span style={{ ...dotStyle, background: category.color }} />
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{category.name}</h3>
+                              {budget ? (
+                                <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>
+                                  Budget: {formatCurrency(budget)}
+                                  {overBudget && <span style={{ color: 'var(--error)', marginLeft: '0.4rem', fontWeight: 600 }}>⚠️ Over budget</span>}
+                                </p>
+                              ) : (
+                                <p style={{ color: COLORS.muted, margin: '0.25rem 0 0', fontSize: '0.85rem' }}>No budget set</p>
+                              )}
+                            </div>
+                          </div>
+                          <div style={actionsRowStyle}>
+                            <button onClick={() => openEditCatModal(category)} style={btnGhostStyle} type="button">✏️</button>
+                            <button onClick={() => void handleDeleteCat(category)} style={btnDangerStyle} type="button">🗑️</button>
                           </div>
                         </div>
-                        <div style={actionsRowStyle}>
-                          <button onClick={() => openEditModal(category)} style={btnGhostStyle} type="button">✏️</button>
-                          <button onClick={() => handleDelete(category)} style={btnDangerStyle} type="button">🗑️</button>
-                        </div>
-                      </div>
-                      {budget ? (
-                        <div style={{ marginTop: '0.75rem' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
-                            <span>{formatCurrency(spent)} spent</span>
-                            <span>{Math.round(pct)}% of {formatCurrency(budget)}</span>
+                        {budget ? (
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: COLORS.muted, marginBottom: '0.3rem' }}>
+                              <span>{formatCurrency(spent)} spent</span>
+                              <span>{Math.round(pct)}% of {formatCurrency(budget)}</span>
+                            </div>
+                            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '999px', transition: 'width 0.3s' }} />
+                            </div>
                           </div>
-                          <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: '999px', transition: 'width 0.3s' }} />
-                          </div>
-                        </div>
-                      ) : null}
-                    </article>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
+                        ) : null}
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
         </div>
       )}
 
-      <Modal isOpen={isModalOpen} onClose={closeModal} title={editingCategory ? 'Edit Category' : 'Add Category'}>
-        <form onSubmit={handleSubmit}>
+      {/* Category modal */}
+      <Modal isOpen={isCatModalOpen} onClose={closeCatModal} title={editingCategory ? 'Edit Category' : 'Add Category'}>
+        <form onSubmit={(e) => void handleCatSubmit(e)}>
           <div style={formGridStyle}>
             <label style={labelStyle}>
               Name
               <input
                 required
-                value={formState.name}
-                onChange={(event) => setFormState((current) => ({ ...current, name: event.target.value }))}
+                value={catForm.name}
+                onChange={(e) => setCatForm((s) => ({ ...s, name: e.target.value }))}
                 style={inputStyle}
                 type="text"
               />
-              {fieldErrors.name ? <span style={fieldErrorStyle}>{fieldErrors.name}</span> : null}
+              {catFieldErrors.name ? <span style={fieldErrorStyle}>{catFieldErrors.name}</span> : null}
             </label>
 
             <label style={labelStyle}>
               Theme (optional)
               <input
+                list="theme-options"
                 placeholder="e.g. Food, Housing, Transportation"
-                value={formState.theme}
-                onChange={(event) => setFormState((current) => ({ ...current, theme: event.target.value }))}
+                value={catForm.theme}
+                onChange={(e) => setCatForm((s) => ({ ...s, theme: e.target.value }))}
                 style={inputStyle}
                 type="text"
               />
-              {fieldErrors.theme ? <span style={fieldErrorStyle}>{fieldErrors.theme}</span> : null}
+              <datalist id="theme-options">
+                {themes.map((t) => <option key={t.id} value={t.name} />)}
+              </datalist>
+              {catFieldErrors.theme ? <span style={fieldErrorStyle}>{catFieldErrors.theme}</span> : null}
             </label>
 
             <label style={labelStyle}>
               Color
               <div style={colorRowStyle}>
                 <input
-                  value={formState.color}
-                  onChange={(event) => setFormState((current) => ({ ...current, color: event.target.value }))}
+                  value={catForm.color}
+                  onChange={(e) => setCatForm((s) => ({ ...s, color: e.target.value }))}
                   style={colorInputStyle}
                   type="color"
                 />
                 <input
-                  value={formState.color}
-                  onChange={(event) => setFormState((current) => ({ ...current, color: event.target.value }))}
+                  value={catForm.color}
+                  onChange={(e) => setCatForm((s) => ({ ...s, color: e.target.value }))}
                   style={inputStyle}
                   type="text"
                 />
               </div>
-              {fieldErrors.color ? <span style={fieldErrorStyle}>{fieldErrors.color}</span> : null}
+              {catFieldErrors.color ? <span style={fieldErrorStyle}>{catFieldErrors.color}</span> : null}
             </label>
 
             <label style={labelStyle}>
               Monthly Budget (optional)
               <input
                 placeholder="e.g. 500.00"
-                value={formState.monthly_budget}
-                onChange={(event) => setFormState((current) => ({ ...current, monthly_budget: event.target.value }))}
+                value={catForm.monthly_budget}
+                onChange={(e) => setCatForm((s) => ({ ...s, monthly_budget: e.target.value }))}
                 style={inputStyle}
                 type="number"
                 min="0"
                 step="0.01"
               />
-              {fieldErrors.monthly_budget ? <span style={fieldErrorStyle}>{fieldErrors.monthly_budget}</span> : null}
+              {catFieldErrors.monthly_budget ? <span style={fieldErrorStyle}>{catFieldErrors.monthly_budget}</span> : null}
             </label>
           </div>
 
-          {generalError ? <p style={{ ...errorTextStyle, marginTop: '1rem' }}>{generalError}</p> : null}
+          {catGeneralError ? <p style={{ ...errorTextStyle, marginTop: '1rem' }}>{catGeneralError}</p> : null}
 
           <div style={formActionsStyle}>
-            <button onClick={closeModal} style={secondaryButtonStyle} type="button">
-              Cancel
+            <button onClick={closeCatModal} style={secondaryButtonStyle} type="button">Cancel</button>
+            <button disabled={catSubmitting} style={btnPrimaryStyle} type="submit">
+              {catSubmitting ? 'Saving...' : 'Save'}
             </button>
-            <button disabled={isSubmitting} style={btnPrimaryStyle} type="submit">
-              {isSubmitting ? 'Saving...' : 'Save'}
+          </div>
+        </form>
+      </Modal>
+
+      {/* Theme modal */}
+      <Modal isOpen={isThemeModalOpen} onClose={closeThemeModal} title={editingTheme ? 'Edit Theme' : 'Add Theme'}>
+        <form onSubmit={(e) => void handleThemeSubmit(e)}>
+          <div style={formGridStyle}>
+            <label style={labelStyle}>
+              Theme Name
+              <input
+                required
+                value={themeForm.name}
+                onChange={(e) => setThemeForm((s) => ({ ...s, name: e.target.value }))}
+                style={inputStyle}
+                type="text"
+                placeholder="e.g. Housing, Food, Transportation"
+              />
+              {themeFieldErrors.name ? <span style={fieldErrorStyle}>{themeFieldErrors.name}</span> : null}
+            </label>
+
+            <label style={labelStyle}>
+              Monthly Budget (optional)
+              <input
+                placeholder="e.g. 2000.00"
+                value={themeForm.monthly_budget}
+                onChange={(e) => setThemeForm((s) => ({ ...s, monthly_budget: e.target.value }))}
+                style={inputStyle}
+                type="number"
+                min="0"
+                step="0.01"
+              />
+              <span style={mutedTextStyle}>The active amount is automatically computed as the sum of all category budgets in this theme.</span>
+              {themeFieldErrors.monthly_budget ? <span style={fieldErrorStyle}>{themeFieldErrors.monthly_budget}</span> : null}
+            </label>
+          </div>
+
+          {themeGeneralError ? <p style={{ ...errorTextStyle, marginTop: '1rem' }}>{themeGeneralError}</p> : null}
+
+          <div style={formActionsStyle}>
+            <button onClick={closeThemeModal} style={secondaryButtonStyle} type="button">Cancel</button>
+            <button disabled={themeSubmitting} style={btnPrimaryStyle} type="submit">
+              {themeSubmitting ? 'Saving...' : 'Save'}
             </button>
           </div>
         </form>
@@ -330,13 +507,21 @@ const gridStyle: CSSProperties = {
 
 const themeSectionListStyle: CSSProperties = {
   display: 'grid',
-  gap: '1.25rem',
+  gap: '1.5rem',
+}
+
+const themeHeaderStyle: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  marginBottom: '0.5rem',
 }
 
 const themeHeadingStyle: CSSProperties = {
-  margin: '0 0 0.75rem',
+  margin: '0 0 0.2rem',
   color: 'var(--text)',
   fontSize: '1rem',
+  fontWeight: 700,
 }
 
 const dotStyle: CSSProperties = {

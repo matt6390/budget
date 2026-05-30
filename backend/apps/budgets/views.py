@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Sum
@@ -14,7 +14,9 @@ from rest_framework.views import APIView
 from apps.mixins import UserOwnedQuerySetMixin
 from .models import (
     Category,
+    CategoryTheme,
     IncomeSource,
+    IncomeSalaryChange,
     Loan,
     Purchase,
     RecurringExpense,
@@ -25,7 +27,9 @@ from .models import (
 )
 from .serializers import (
     CategorySerializer,
+    CategoryThemeSerializer,
     IncomeSourceSerializer,
+    IncomeSalaryChangeSerializer,
     LoanSerializer,
     PurchaseSerializer,
     RecurringExpenseSerializer,
@@ -48,6 +52,17 @@ def parse_month_param(month_value: str | None):
 
 def format_currency(amount: Decimal) -> str:
     return f'{quantize_currency(amount):.2f}'
+
+
+def get_income_amount_for_date(income_source: IncomeSource, as_of: date) -> Decimal:
+    """Return the salary amount for an income source that was effective on a given date."""
+    change = (
+        income_source.salary_history
+        .filter(effective_date__lte=as_of)
+        .order_by('-effective_date', '-created_at')
+        .first()
+    )
+    return change.amount if change else income_source.amount
 
 
 def calculate_payoff(balance: Decimal, annual_rate_pct: Decimal, monthly_payment: Decimal, extra: Decimal = Decimal('0')):
@@ -77,14 +92,37 @@ def calculate_payoff(balance: Decimal, annual_rate_pct: Decimal, monthly_payment
     return months, total_interest
 
 
+class CategoryThemeViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
+    queryset = CategoryTheme.objects.all().order_by('name')
+    serializer_class = CategoryThemeSerializer
+
+    def perform_update(self, serializer):
+        old_name = serializer.instance.name
+        new_name = serializer.validated_data.get('name', old_name)
+        serializer.save()
+        if new_name != old_name:
+            Category.objects.filter(user=self.request.user, theme=old_name).update(theme=new_name)
+
+
 class CategoryViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
     queryset = Category.objects.all().order_by('name')
     serializer_class = CategorySerializer
 
 
 class IncomeSourceViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
-    queryset = IncomeSource.objects.all().order_by('-created_at')
+    queryset = IncomeSource.objects.prefetch_related('salary_history').all().order_by('-created_at')
     serializer_class = IncomeSourceSerializer
+
+    @action(detail=True, methods=['post'], url_path='salary-change')
+    def log_salary_change(self, request, pk=None):
+        income_source = self.get_object()
+        serializer = IncomeSalaryChangeSerializer(data={**request.data, 'income_source': income_source.pk})
+        serializer.is_valid(raise_exception=True)
+        serializer.save(income_source=income_source)
+        # Update the income source's current amount to the new salary
+        income_source.amount = serializer.validated_data['amount']
+        income_source.save(update_fields=['amount'])
+        return Response(IncomeSourceSerializer(income_source).data)
 
 
 class RecurringExpenseViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
@@ -159,12 +197,12 @@ class LoanViewSet(UserOwnedQuerySetMixin, viewsets.ModelViewSet):
 
         # Compute net budget from current month (to suggest extra payment)
         today = timezone.localdate()
-        active_income = IncomeSource.objects.filter(user=request.user, is_active=True)
+        active_income = IncomeSource.objects.prefetch_related('salary_history').filter(user=request.user, is_active=True)
         active_expenses = RecurringExpense.objects.filter(user=request.user, is_active=True)
         monthly_purchases = Purchase.objects.filter(user=request.user, date__year=today.year, date__month=today.month)
 
         monthly_income = sum(
-            (calculate_monthly_equivalent(s.amount, s.cadence) for s in active_income),
+            (calculate_monthly_equivalent(get_income_amount_for_date(s, today), s.cadence) for s in active_income),
             Decimal('0.00'),
         )
         monthly_expenses = active_expenses.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
@@ -241,13 +279,26 @@ class SummaryView(APIView):
         else:
             year, month = parsed_month
 
+        # Use the last day of the queried month to pick the correct salary for that period
+        import calendar
+        last_day = calendar.monthrange(year, month)[1]
+        month_end_date = date(year, month, last_day)
+
         month_label = f'{year:04d}-{month:02d}'
-        active_income_sources = IncomeSource.objects.filter(user=request.user, is_active=True)
+        active_income_sources = IncomeSource.objects.prefetch_related('salary_history').filter(
+            user=request.user, is_active=True
+        )
         active_recurring_expenses = RecurringExpense.objects.filter(user=request.user, is_active=True)
         monthly_purchases = Purchase.objects.filter(user=request.user, date__year=year, date__month=month)
 
         monthly_income = sum(
-            (calculate_monthly_equivalent(source.amount, source.cadence) for source in active_income_sources),
+            (
+                calculate_monthly_equivalent(
+                    get_income_amount_for_date(source, month_end_date),
+                    source.cadence,
+                )
+                for source in active_income_sources
+            ),
             Decimal('0.00'),
         )
         monthly_expenses = active_recurring_expenses.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
